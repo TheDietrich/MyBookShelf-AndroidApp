@@ -1,6 +1,7 @@
 package com.example.mybooksheelf
 
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -17,4 +18,8 @@ interface MangaDao {
 
     @Update
     suspend fun update(manga: MangaEntity): Int
+
+    // Fehlt in deinem Code, daher "Unresolved reference: delete":
+    @Delete
+    suspend fun delete(manga: MangaEntity)
 }
