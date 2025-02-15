@@ -8,7 +8,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -46,12 +45,9 @@ import androidx.compose.material.SwipeToDismiss
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-// KeyboardOptions entfernt
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -63,7 +59,6 @@ import androidx.navigation.compose.rememberNavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.google.gson.Gson
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -71,33 +66,46 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import android.util.Base64
-import java.io.FileInputStream
 
 @Composable
 fun MyBookSheelfTheme(
     darkTheme: Boolean,
     content: @Composable () -> Unit
 ) {
-    val colors = if (darkTheme) {
-        darkColors(
-            primary = MaterialTheme.colors.primary,
-            error = MaterialTheme.colors.error,
-            background = MaterialTheme.colors.background,
-            surface = MaterialTheme.colors.surface
-        )
-    } else {
-        lightColors(
-            primary = MaterialTheme.colors.primary,
-            error = MaterialTheme.colors.error,
-            background = MaterialTheme.colors.background,
-            surface = MaterialTheme.colors.surface
-        )
-    }
+    val darkColorPalette = darkColors(
+        primary = Color(0xFFFF5722),        // Dezentes, eher graublaues Primary
+        primaryVariant = Color(0xFFFF5722), // Dunklere Variante
+        secondary = Color(0xFFA9B8C9),      // Heller Sekundärton (graublau)
+        secondaryVariant = Color(0xFF8192A1),
+        background = Color(0xFF000000),     // Sehr dunkles Grau (Standard Dark Mode)
+        surface = Color(0xFF332F2F),        // Etwas aufgehelltes Dunkelgrau
+        error = Color(0xFFCF6679),          // Google’s Standard-Dark-Error
+        onPrimary = Color.White,            // Textfarbe auf primary
+        onSecondary = Color.Black,          // Textfarbe auf secondary
+        onBackground = Color(0xFFD0D0D0),   // Helles Grau auf dunklem Hintergrund
+        onSurface = Color(0xFFD0D0D0),      // Textfarbe auf Karten/Listen
+        onError = Color.White
+    )
+
+
+
+    val lightColorPalette = lightColors(
+        primary = Color(0xFF6200EE),
+        primaryVariant = Color(0xFF3700B3),
+        secondary = Color(0xFF03DAC6),
+        background = Color(0xFFFFFFFF),
+        surface = Color(0xFFFAFAFA),
+        error = Color(0xFFB00020),
+    )
+
+    // Palette je nach darkTheme wählen
+    val colors = if (darkTheme) darkColorPalette else lightColorPalette
 
     MaterialTheme(colors = colors) {
         content()
     }
 }
+
 
 val Context.dataStore by preferencesDataStore(name = "settings")
 
@@ -245,7 +253,7 @@ fun BackupScreen(navController: NavController, viewModel: MangaViewModel) {
                 // Hier bauen wir ein List<MangaExportDto>
                 val dtoList = mangaList.map { manga ->
                     val coverB64 = if (!manga.coverUri.isNullOrBlank()) {
-                        readFileAsBase64(manga.coverUri!!)
+                        readFileAsBase64(manga.coverUri)
                     } else null
 
                     MangaExportDto(
@@ -253,7 +261,7 @@ fun BackupScreen(navController: NavController, viewModel: MangaViewModel) {
                         titel = manga.titel,
                         coverBase64 = coverB64,
                         aktuellerBand = manga.aktuellerBand,
-                        gekaufteBände = manga.gekaufteBände
+                        gekaufteBaende = manga.gekaufteBände
                     )
                 }
                 val json = Gson().toJson(dtoList)
@@ -284,7 +292,7 @@ fun BackupScreen(navController: NavController, viewModel: MangaViewModel) {
                         titel = dto.titel,
                         coverUri = realCoverPath,
                         aktuellerBand = dto.aktuellerBand,
-                        gekaufteBände = dto.gekaufteBände
+                        gekaufteBände = dto.gekaufteBaende
                     )
                     // Einfügen oder updaten
                     viewModel.addManga(entity)
@@ -496,7 +504,7 @@ data class MangaExportDto(
     val titel: String,
     val coverBase64: String?, // null falls kein Bild
     val aktuellerBand: Int,
-    val gekaufteBände: Int
+    val gekaufteBaende: Int
 )
 
 /** Neues Buch hinzufügen (ohne KeyboardOptions). */
@@ -559,7 +567,7 @@ fun MangaAddScreen(navController: NavController) {
             NumberInputField(
                 value = currentVolume,
                 onValueChange = { currentVolume = it },
-                label = "Aktueller Band"
+                label = "Aktueller Band (lesen)"
             )
             Spacer(modifier = Modifier.height(8.dp))
             NumberInputField(
@@ -748,7 +756,7 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                 NumberInputField(
                     value = currentVolume,
                     onValueChange = { currentVolume = it },
-                    label = "Aktueller Band"
+                    label = "Aktueller Band (lesen)"
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 NumberInputField(
