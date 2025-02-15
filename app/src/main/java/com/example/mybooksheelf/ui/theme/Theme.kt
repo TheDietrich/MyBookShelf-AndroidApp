@@ -32,17 +32,3 @@ private val LightColorScheme = lightColorScheme(
     onSurface = Color(0xFF1C1B1F),
     */
 )
-
-@Composable
-fun MyBookSheelfTheme(
-    darkTheme: Boolean,
-    content: @Composable () -> Unit
-) {
-    val colors = if (darkTheme) DarkColorScheme else LightColorScheme
-
-    MaterialTheme(
-        colorScheme = colors,
-        typography = Typography,
-        content = content
-    )
-}
