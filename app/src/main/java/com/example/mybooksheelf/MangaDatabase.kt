@@ -1,25 +1,26 @@
 package com.example.mybooksheelf
 
-import android.app.Application
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import android.content.Context
 
-@Database(entities = [MangaEntity::class], version = 1, exportSchema = false)
+@Database(entities = [MangaEntity::class, SpecialSeriesEntity::class], version = 2)
 abstract class MangaDatabase : RoomDatabase() {
     abstract fun mangaDao(): MangaDao
+    abstract fun specialSeriesDao(): SpecialSeriesDao
 
     companion object {
         @Volatile
         private var INSTANCE: MangaDatabase? = null
 
-        fun getDatabase(app: Application): MangaDatabase {
+        fun getDatabase(context: Context): MangaDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
-                    app,
+                    context.applicationContext,
                     MangaDatabase::class.java,
                     "manga_database"
-                ).build()
+                ).fallbackToDestructiveMigration().build()
                 INSTANCE = instance
                 instance
             }

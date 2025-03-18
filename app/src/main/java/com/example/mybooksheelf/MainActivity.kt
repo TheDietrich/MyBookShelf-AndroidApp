@@ -65,6 +65,12 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import android.util.Base64
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.AlertDialog
+import androidx.compose.material.Divider
+import androidx.compose.ui.unit.Dp
+
 
 @Composable
 fun MyBookSheelfTheme(
@@ -72,18 +78,18 @@ fun MyBookSheelfTheme(
     content: @Composable () -> Unit
 ) {
     val darkColorPalette = darkColors(
-        primary = Color(0xFFFF5722),        // Dezentes, eher graublaues Primary
-        primaryVariant = Color(0xFFFF5722), // Dunklere Variante
-        secondary = Color(0xFFA9B8C9),      // Heller Sekundärton (graublau)
-        secondaryVariant = Color(0xFF8192A1),
-        background = Color(0xFF000000),     // Sehr dunkles Grau (Standard Dark Mode)
-        surface = Color(0xFF332F2F),        // Etwas aufgehelltes Dunkelgrau
-        error = Color(0xFFCF6679),          // Google’s Standard-Dark-Error
-        onPrimary = Color.White,            // Textfarbe auf primary
-        onSecondary = Color.Black,          // Textfarbe auf secondary
-        onBackground = Color(0xFFD0D0D0),   // Helles Grau auf dunklem Hintergrund
-        onSurface = Color(0xFFD0D0D0),      // Textfarbe auf Karten/Listen
-        onError = Color.White
+        primary = Color(0xFFFF5722),       // Deep Orange (z.B. Material Deep Orange 500)
+        primaryVariant = Color(0xFFE64A19), // Etwas dunklere Variante (Deep Orange 700)
+        secondary = Color(0xFF03DAC6),     // Material Teal
+        secondaryVariant = Color(0xFF018786),
+        background = Color(0xFF121212),    // Standard Material Dark Mode-Hintergrund
+        surface = Color(0xFF1E1E1E),       // Etwas helleres Schwarz für Oberflächen
+        error = Color(0xFFCF6679),         // Standard-Error für Dark Mode
+        onPrimary = Color.White,           // Weißer Text auf Orange
+        onSecondary = Color.Black,         // Schwarzer Text auf Teal
+        onBackground = Color(0xFFE0E0E0),  // Hellgrau auf dunklem Hintergrund
+        onSurface = Color(0xFFE0E0E0),     // Hellgrau auf dunklen Oberflächen
+        onError = Color.Black
     )
 
 
@@ -141,6 +147,22 @@ class MangaViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         return file.absolutePath
+    }
+
+    // --- Sonderreihen-Funktionen ---
+    fun getSpecialSeriesForManga(parentMangaId: String) =
+        MangaDatabase.getDatabase(getApplication()).specialSeriesDao().getSpecialSeriesForManga(parentMangaId)
+
+    fun addSpecialSeries(series: SpecialSeriesEntity) = viewModelScope.launch {
+        MangaDatabase.getDatabase(getApplication()).specialSeriesDao().insert(series)
+    }
+
+    fun updateSpecialSeries(series: SpecialSeriesEntity) = viewModelScope.launch {
+        MangaDatabase.getDatabase(getApplication()).specialSeriesDao().update(series)
+    }
+
+    fun deleteSpecialSeries(series: SpecialSeriesEntity) = viewModelScope.launch {
+        MangaDatabase.getDatabase(getApplication()).specialSeriesDao().delete(series)
     }
 }
 
@@ -631,28 +653,22 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
 
     var currentVolume by remember { mutableStateOf("0") }
     var ownedVolumes by remember { mutableStateOf("0") }
-
-    // Zeigt/hide das Menü
     var menuExpanded by remember { mutableStateOf(false) }
 
-    // Picker für Cover
+    // Cover Picker
     val context = LocalContext.current
     val coverPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let {
             val newCover = viewModel.saveImage(context, it)
-            // Danach wird man zurücknavigiert, wenn updateSuccess ankommt
             manga?.let { original ->
                 viewModel.updateManga(original.copy(coverUri = newCover))
             }
         }
     }
 
-    /**
-     * Wenn "manga" sich ändert (z.B. neu geladen aus DB),
-     * aktualisieren wir die Felder. So stehen sofort 3,4 etc. da.
-     */
+    // Hauptmanga-Daten initialisieren
     LaunchedEffect(manga) {
         if (manga != null) {
             currentVolume = manga.aktuellerBand.toString()
@@ -660,13 +676,31 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
         }
     }
 
-    // Wenn Update fertig -> Zurück
+    // Zurücknavigieren, wenn Update fertig
     LaunchedEffect(viewModel.updateSuccess.value) {
         if (viewModel.updateSuccess.value) {
             navController.popBackStack()
             viewModel.resetUpdateStatus()
         }
     }
+
+    // Sonderreihen
+    var showAddSeriesDialog by remember { mutableStateOf(false) }
+    var newSeriesName by remember { mutableStateOf("") }
+
+    var specialSeriesList by remember { mutableStateOf<List<SpecialSeriesEntity>>(emptyList()) }
+    LaunchedEffect(manga) {
+        manga?.let {
+            viewModel.getSpecialSeriesForManga(it.id).collect { series ->
+                specialSeriesList = series
+            }
+        }
+    }
+
+    // Umbenennen einer Sonderreihe
+    var editingSeriesId by remember { mutableStateOf<String?>(null) }
+    var editingSeriesName by remember { mutableStateOf("") }
+    var showEditSeriesDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         backgroundColor = MaterialTheme.colors.background,
@@ -679,7 +713,6 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                     }
                 },
                 actions = {
-                    // Drei-Punkte-Menü
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "Menü")
                     }
@@ -707,12 +740,15 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
             )
         }
     ) { padding ->
+        // Hier wird der Inhalt scrollbar gemacht
         Column(
             modifier = Modifier
                 .padding(padding)
                 .padding(16.dp)
+                .verticalScroll(rememberScrollState())
         ) {
             manga?.let { currentManga ->
+                // --- (1) Haupt-Buchdetails ---
                 val coverModel = if (currentManga.coverUri.isNullOrBlank()) null else currentManga.coverUri
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
@@ -739,8 +775,34 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                     onValueChange = { ownedVolumes = it },
                     label = "Gekaufte Bände"
                 )
-                Spacer(modifier = Modifier.height(16.dp))
 
+                // --- (2) Sonderreihen anzeigen, wenn vorhanden ---
+                if (specialSeriesList.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(24.dp))
+                    DividerWithText(text = "Sonderreihen")
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    specialSeriesList.forEach { series ->
+                        SpecialSeriesItem(
+                            series = series,
+                            onUpdate = { updatedSeries ->
+                                viewModel.updateSpecialSeries(updatedSeries)
+                            },
+                            onDelete = {
+                                viewModel.deleteSpecialSeries(it)
+                            },
+                            onRename = { currentName ->
+                                editingSeriesId = series.id
+                                editingSeriesName = currentName
+                                showEditSeriesDialog = true
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+
+                // --- (3) Zwei Buttons am Ende ---
+                Spacer(modifier = Modifier.height(24.dp))
                 Button(
                     onClick = {
                         viewModel.updateManga(
@@ -754,10 +816,193 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                 ) {
                     Text("Aktualisieren")
                 }
+
+                Spacer(modifier = Modifier.height(8.dp)) // Kleinerer Abstand
+
+                Button(
+                    onClick = { showAddSeriesDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Sonderreihen anlegen")
+                }
             } ?: Text(
                 "Buch nicht gefunden",
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
         }
     }
+
+    // --- (4) Dialoge ---
+
+    if (showAddSeriesDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddSeriesDialog = false },
+            title = { Text("Neue Sonderreihe anlegen") },
+            text = {
+                OutlinedTextField(
+                    value = newSeriesName,
+                    onValueChange = { newSeriesName = it },
+                    label = { Text("Name der Sonderreihe") }
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    manga?.let {
+                        val newSeries = SpecialSeriesEntity(
+                            parentMangaId = it.id,
+                            name = newSeriesName,
+                            aktuellerBand = 0,
+                            gekaufteBände = 0
+                        )
+                        viewModel.addSpecialSeries(newSeries)
+                    }
+                    newSeriesName = ""
+                    showAddSeriesDialog = false
+                }) {
+                    Text("Anlegen")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showAddSeriesDialog = false }) {
+                    Text("Abbrechen")
+                }
+            }
+        )
+    }
+
+    if (showEditSeriesDialog && editingSeriesId != null) {
+        AlertDialog(
+            onDismissRequest = { showEditSeriesDialog = false },
+            title = { Text("Sonderreihe umbenennen") },
+            text = {
+                OutlinedTextField(
+                    value = editingSeriesName,
+                    onValueChange = { editingSeriesName = it },
+                    label = { Text("Neuer Name") }
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val updatedSeries = specialSeriesList.find { it.id == editingSeriesId }
+                        ?.copy(name = editingSeriesName)
+                    if (updatedSeries != null) {
+                        viewModel.updateSpecialSeries(updatedSeries)
+                    }
+                    editingSeriesId = null
+                    editingSeriesName = ""
+                    showEditSeriesDialog = false
+                }) {
+                    Text("Speichern")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showEditSeriesDialog = false }) {
+                    Text("Abbrechen")
+                }
+            }
+        )
+    }
 }
+
+
+
+
+@Composable
+fun SpecialSeriesItem(
+    series: SpecialSeriesEntity,
+    onUpdate: (SpecialSeriesEntity) -> Unit,
+    onDelete: (SpecialSeriesEntity) -> Unit,
+    onRename: (String) -> Unit
+) {
+    var currentVolume by remember { mutableStateOf(series.aktuellerBand.toString()) }
+    var ownedVolumes by remember { mutableStateOf(series.gekaufteBände.toString()) }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    Card(
+        elevation = 4.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(series.name, style = MaterialTheme.typography.h6, modifier = Modifier.weight(1f))
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Optionen")
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    DropdownMenuItem(onClick = {
+                        menuExpanded = false
+                        onRename(series.name)
+                    }) {
+                        Text("Umbenennen")
+                    }
+                    DropdownMenuItem(onClick = {
+                        menuExpanded = false
+                        onDelete(series)
+                    }) {
+                        Text("Löschen")
+                    }
+                }
+            }
+            // Eingabefelder für "gelesen" und "gekaufte Bände"
+            NumberInputField(
+                value = currentVolume,
+                onValueChange = {
+                    currentVolume = it
+                    onUpdate(series.copy(aktuellerBand = it.toIntOrNull() ?: 0))
+                },
+                label = "Gelesen"
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            NumberInputField(
+                value = ownedVolumes,
+                onValueChange = {
+                    ownedVolumes = it
+                    onUpdate(series.copy(gekaufteBände = it.toIntOrNull() ?: 0))
+                },
+                label = "Gekaufte Bände"
+            )
+        }
+    }
+}
+
+@Composable
+fun DividerWithText(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+    thickness: Dp = 1.dp,
+    horizontalPadding: Dp = 8.dp,
+    textPadding: Dp = 16.dp
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = horizontalPadding)
+    ) {
+        // Linie links
+        Divider(
+            modifier = Modifier.weight(1f),
+            color = color,
+            thickness = thickness
+        )
+
+        // Text in der Mitte
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = textPadding),
+            color = color, // oder eigenes Color-Objekt
+            style = MaterialTheme.typography.body2
+        )
+
+        // Linie rechts
+        Divider(
+            modifier = Modifier.weight(1f),
+            color = color,
+            thickness = thickness
+        )
+    }
+}
+
+
+
