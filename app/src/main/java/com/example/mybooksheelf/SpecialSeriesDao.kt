@@ -1,3 +1,8 @@
+/**
+ * Code by: Jonas Dietrich
+ * Date: 18.03.2025
+ */
+
 package com.example.mybooksheelf
 
 import androidx.room.*
