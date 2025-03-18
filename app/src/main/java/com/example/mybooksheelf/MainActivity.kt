@@ -74,6 +74,12 @@ import androidx.compose.material.RadioButton
 import androidx.compose.material.Surface
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.ui.graphics.vector.ImageVector
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+
+
+
+
 
 
 @Composable
@@ -241,54 +247,141 @@ fun SettingsScreen(navController: NavController) {
     val mangaList by viewModel.mangaList.collectAsState(emptyList())
 
     // Launcher zum Erstellen eines Backups (Export)
+    // Launcher zum Erstellen eines Backups (Export)
     val backupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         uri?.let { documentUri ->
             context.contentResolver.openOutputStream(documentUri)?.use { stream ->
-                // Backup-Daten erstellen: Mapping deiner Manga-Daten in ein DTO
-                val dtoList = mangaList.map { manga ->
-                    val coverB64 = if (!manga.coverUri.isNullOrBlank()) {
-                        readFileAsBase64(manga.coverUri)
+
+                // 1) Alle Manga aus der DB laden
+                val allManga = mangaList // => already collectedAsState in your code
+
+                // 2) Für jedes Manga zusätzlich Sonderreihen laden
+                val backupMangaList = allManga.map { mangaEntity ->
+
+                    // Sonderreihen laden
+                    val specialList: List<SpecialSeriesEntity> = runBlocking {
+                        try {
+                            MangaDatabase.getDatabase(context)
+                                .specialSeriesDao()
+                                .getSpecialSeriesForManga(mangaEntity.id)
+                                .first()
+                        } catch(e: NoSuchElementException) {
+                            emptyList()
+                        }
+                    }
+
+                    // In ExportDto konvertieren
+                    val coverB64 = if (!mangaEntity.coverUri.isNullOrBlank()) {
+                        readFileAsBase64(mangaEntity.coverUri)
                     } else null
+
+                    // Sonderreihen in DTO-Objekte umwandeln
+                    val specialSeriesDto = specialList.map { series ->
+                        SpecialSeriesExportDto(
+                            id = series.id,
+                            parentMangaId = series.parentMangaId,
+                            name = series.name,
+                            aktuellerBand = series.aktuellerBand,
+                            gekaufteBaende = series.gekaufteBände
+                        )
+                    }
+
                     MangaExportDto(
-                        id = manga.id,
-                        titel = manga.titel,
+                        id = mangaEntity.id,
+                        titel = mangaEntity.titel,
                         coverBase64 = coverB64,
-                        aktuellerBand = manga.aktuellerBand,
-                        gekaufteBaende = manga.gekaufteBände
+                        aktuellerBand = mangaEntity.aktuellerBand,
+                        gekaufteBaende = mangaEntity.gekaufteBände,
+                        isCompleted = mangaEntity.isCompleted,       // Neu
+                        nextVolumeDate = mangaEntity.nextVolumeDate, // Neu
+                        specialSeries = specialSeriesDto             // Neu
                     )
                 }
-                val json = Gson().toJson(dtoList)
+
+                // 3) In eine BackupData-Struktur stecken
+                val backupData = BackupData(
+                    version = 2, // Wir sagen, das ist unser "Format v2"
+                    mangaList = backupMangaList
+                )
+
+                // 4) Als JSON serialisieren und schreiben
+                val json = Gson().toJson(backupData)
                 stream.write(json.toByteArray())
             }
         }
     }
 
+
     // Launcher zum Importieren eines Backups
+    // Innerhalb deines SettingsScreen-Compose-Blocks, z. B. direkt vor dem Scaffold:
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let { documentUri ->
             context.contentResolver.openInputStream(documentUri)?.use { stream ->
                 val json = stream.bufferedReader().use { it.readText() }
-                val dtoList = Gson().fromJson(json, Array<MangaExportDto>::class.java).toList()
-                dtoList.forEach { dto ->
-                    val realCoverPath = dto.coverBase64?.let { b64 ->
-                        writeFileFromBase64(context, b64)
+                // Import in einer Coroutine ausführen:
+                scope.launch {
+                    // Versuche zuerst, das Backup als komplettes Objekt zu parsen.
+                    val backupData = try {
+                        Gson().fromJson(json, BackupData::class.java)
+                    } catch (e: Exception) {
+                        // Falls das fehlschlägt, versuche es als Array von MangaExportDto zu parsen
+                        try {
+                            val mangaList: List<MangaExportDto> =
+                                Gson().fromJson(json, Array<MangaExportDto>::class.java).toList()
+                            // Erstelle BackupData mit einer alten Version (z.B. Version 1)
+                            BackupData(version = 1, mangaList = mangaList)
+                        } catch (e: Exception) {
+                            null
+                        }
                     }
-                    val entity = MangaEntity(
-                        id = dto.id,
-                        titel = dto.titel,
-                        coverUri = realCoverPath,
-                        aktuellerBand = dto.aktuellerBand,
-                        gekaufteBände = dto.gekaufteBaende
-                    )
-                    viewModel.addManga(entity)
+                    if (backupData == null) {
+                        // Hier könntest du eine Fehlermeldung anzeigen oder anderweitig reagieren
+                        return@launch
+                    }
+                    // Für jedes Backup-Manga-DTO
+                    backupData.mangaList.forEach { dto ->
+                        // Alte Backups haben eventuell die Felder nicht – hier Defaultwerte:
+                        val isCompleted = dto.isCompleted ?: false
+                        val nextVolumeDate = dto.nextVolumeDate // bleibt null, wenn nicht gesetzt
+                        val specialSeriesList = dto.specialSeries ?: emptyList()
+                        // Cover decodieren
+                        val realCoverPath = dto.coverBase64?.let { b64 ->
+                            writeFileFromBase64(context, b64)
+                        }
+                        // Manga in DB einfügen
+                        val mangaEntity = MangaEntity(
+                            id = dto.id,
+                            titel = dto.titel,
+                            coverUri = realCoverPath,
+                            aktuellerBand = dto.aktuellerBand,
+                            gekaufteBände = dto.gekaufteBaende,
+                            isCompleted = isCompleted,
+                            nextVolumeDate = nextVolumeDate
+                        )
+                        viewModel.addManga(mangaEntity)
+                        // Sonderreihen einfügen
+                        specialSeriesList.forEach { sDto ->
+                            val seriesEntity = SpecialSeriesEntity(
+                                id = sDto.id,
+                                parentMangaId = sDto.parentMangaId,
+                                name = sDto.name,
+                                aktuellerBand = sDto.aktuellerBand,
+                                gekaufteBände = sDto.gekaufteBaende
+                            )
+                            viewModel.addSpecialSeries(seriesEntity)
+                        }
+                    }
                 }
             }
         }
     }
+
+
+
 
     Scaffold(
         backgroundColor = MaterialTheme.colors.background,
@@ -522,16 +615,6 @@ fun MangaListItem(
     )
 }
 
-/**
- * Datentransfer-Objekt für Backup/Restore, enthält das Cover als Base64
- */
-data class MangaExportDto(
-    val id: String,
-    val titel: String,
-    val coverBase64: String?, // null falls kein Bild
-    val aktuellerBand: Int,
-    val gekaufteBaende: Int
-)
 
 /** Neues Buch hinzufügen (ohne KeyboardOptions). */
 @OptIn(ExperimentalMaterialApi::class)
