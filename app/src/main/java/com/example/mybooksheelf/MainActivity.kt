@@ -681,7 +681,7 @@ fun MangaAddScreen(navController: NavController) {
             NumberInputField(
                 value = currentVolume,
                 onValueChange = { currentVolume = it },
-                label = "Aktueller Band (gelesen)"
+                label = "Gelesen"
             )
             Spacer(modifier = Modifier.height(8.dp))
             NumberInputField(
@@ -927,7 +927,7 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                 NumberInputField(
                     value = currentVolume,
                     onValueChange = { currentVolume = it },
-                    label = "Aktueller Band (lesen)"
+                    label = "Gelesen"
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 NumberInputField(
