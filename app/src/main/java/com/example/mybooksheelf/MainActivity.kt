@@ -181,9 +181,6 @@ fun MainApp() {
                 )
             }
             composable("settings") { SettingsScreen(navController) }
-            composable("backup") {
-                BackupScreen(navController, viewModel())
-            }
 
         }
     }
@@ -197,9 +194,64 @@ fun SettingsScreen(navController: NavController) {
     val scope = rememberCoroutineScope()
     var darkTheme by remember { mutableStateOf(false) }
 
+    // Dark Mode aus dem DataStore laden
     LaunchedEffect(Unit) {
         context.dataStore.data.collect { prefs ->
             darkTheme = prefs[booleanPreferencesKey("darkTheme")] ?: false
+        }
+    }
+
+    // Hier initialisieren wir den MangaViewModel, um auch die Backup-Daten zu erhalten
+    val viewModel: MangaViewModel = viewModel()
+    val mangaList by viewModel.mangaList.collectAsState(emptyList())
+
+    // Launcher zum Erstellen eines Backups (Export)
+    val backupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri?.let { documentUri ->
+            context.contentResolver.openOutputStream(documentUri)?.use { stream ->
+                // Backup-Daten erstellen: Mapping deiner Manga-Daten in ein DTO
+                val dtoList = mangaList.map { manga ->
+                    val coverB64 = if (!manga.coverUri.isNullOrBlank()) {
+                        readFileAsBase64(manga.coverUri)
+                    } else null
+                    MangaExportDto(
+                        id = manga.id,
+                        titel = manga.titel,
+                        coverBase64 = coverB64,
+                        aktuellerBand = manga.aktuellerBand,
+                        gekaufteBaende = manga.gekaufteBände
+                    )
+                }
+                val json = Gson().toJson(dtoList)
+                stream.write(json.toByteArray())
+            }
+        }
+    }
+
+    // Launcher zum Importieren eines Backups
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { documentUri ->
+            context.contentResolver.openInputStream(documentUri)?.use { stream ->
+                val json = stream.bufferedReader().use { it.readText() }
+                val dtoList = Gson().fromJson(json, Array<MangaExportDto>::class.java).toList()
+                dtoList.forEach { dto ->
+                    val realCoverPath = dto.coverBase64?.let { b64 ->
+                        writeFileFromBase64(context, b64)
+                    }
+                    val entity = MangaEntity(
+                        id = dto.id,
+                        titel = dto.titel,
+                        coverUri = realCoverPath,
+                        aktuellerBand = dto.aktuellerBand,
+                        gekaufteBände = dto.gekaufteBaende
+                    )
+                    viewModel.addManga(entity)
+                }
+            }
         }
     }
 
@@ -218,22 +270,51 @@ fun SettingsScreen(navController: NavController) {
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
-            Switch(
-                checked = darkTheme,
-                onCheckedChange = { enabled ->
-                    darkTheme = enabled
-                    scope.launch {
-                        context.dataStore.edit { settings ->
-                            settings[booleanPreferencesKey("darkTheme")] = enabled
+            // Dark Mode-Schalter
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Switch(
+                    checked = darkTheme,
+                    onCheckedChange = { enabled ->
+                        darkTheme = enabled
+                        scope.launch {
+                            context.dataStore.edit { settings ->
+                                settings[booleanPreferencesKey("darkTheme")] = enabled
+                            }
                         }
                     }
-                },
-                modifier = Modifier.padding(16.dp)
-            )
-            Text("Dark Mode", modifier = Modifier.padding(horizontal = 16.dp))
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Dark Mode")
+            }
+
+            // Backup erstellen Button
+            Button(
+                onClick = { backupLauncher.launch("backup_${System.currentTimeMillis()}.json") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Text("Backup erstellen")
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Backup importieren Button
+            Button(
+                onClick = { importLauncher.launch(arrayOf("application/json")) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Text("Backup importieren")
+            }
         }
     }
 }
+
 
 /** Backup-Screen. */
 @OptIn(ExperimentalMaterialApi::class)
@@ -352,9 +433,6 @@ fun MangaListScreen(navController: NavController) {
                 actions = {
                     IconButton(onClick = { navController.navigate("settings") }) {
                         Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")
-                    }
-                    IconButton(onClick = { navController.navigate("backup") }) {
-                        Icon(Icons.Filled.Done, contentDescription = "Backup")
                     }
                 },
                 backgroundColor = MaterialTheme.colors.primary
@@ -567,7 +645,7 @@ fun MangaAddScreen(navController: NavController) {
             NumberInputField(
                 value = currentVolume,
                 onValueChange = { currentVolume = it },
-                label = "Aktueller Band (lesen)"
+                label = "Aktueller Band (gelesen)"
             )
             Spacer(modifier = Modifier.height(8.dp))
             NumberInputField(
