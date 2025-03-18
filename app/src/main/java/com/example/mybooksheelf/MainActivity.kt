@@ -35,7 +35,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -309,108 +308,6 @@ fun SettingsScreen(navController: NavController) {
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
             ) {
-                Text("Backup importieren")
-            }
-        }
-    }
-}
-
-
-/** Backup-Screen. */
-@OptIn(ExperimentalMaterialApi::class)
-@Composable
-fun BackupScreen(navController: NavController, viewModel: MangaViewModel) {
-    val context = LocalContext.current
-
-    // Flow -> State
-    val mangaList by viewModel.mangaList.collectAsState(emptyList())
-
-    // Launcher, um eine JSON-Datei zu erstellen (Export)
-    val backupLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        uri?.let { documentUri ->
-            context.contentResolver.openOutputStream(documentUri)?.use { stream ->
-                // Hier bauen wir ein List<MangaExportDto>
-                val dtoList = mangaList.map { manga ->
-                    val coverB64 = if (!manga.coverUri.isNullOrBlank()) {
-                        readFileAsBase64(manga.coverUri)
-                    } else null
-
-                    MangaExportDto(
-                        id = manga.id,
-                        titel = manga.titel,
-                        coverBase64 = coverB64,
-                        aktuellerBand = manga.aktuellerBand,
-                        gekaufteBaende = manga.gekaufteBände
-                    )
-                }
-                val json = Gson().toJson(dtoList)
-                stream.write(json.toByteArray())
-            }
-        }
-    }
-
-    // Launcher, um eine JSON-Datei (Backup) zu öffnen (Import)
-    val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let { documentUri ->
-            context.contentResolver.openInputStream(documentUri)?.use { stream ->
-                val json = stream.bufferedReader().use { it.readText() }
-                // Hier parsen wir List<MangaExportDto>
-                val dtoList = Gson().fromJson(json, Array<MangaExportDto>::class.java).toList()
-
-                // Für jeden MangaExportDto decodieren wir das Cover
-                // und fügen das in die DB ein
-                dtoList.forEach { dto ->
-                    val realCoverPath = dto.coverBase64?.let { b64 ->
-                        writeFileFromBase64(context, b64)
-                    }
-
-                    val entity = MangaEntity(
-                        id = dto.id,
-                        titel = dto.titel,
-                        coverUri = realCoverPath,
-                        aktuellerBand = dto.aktuellerBand,
-                        gekaufteBände = dto.gekaufteBaende
-                    )
-                    // Einfügen oder updaten
-                    viewModel.addManga(entity)
-                }
-            }
-        }
-    }
-
-    Scaffold(
-        backgroundColor = MaterialTheme.colors.background,
-        topBar = {
-            TopAppBar(
-                title = { Text("Backup") },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Zurück")
-                    }
-                },
-                backgroundColor = MaterialTheme.colors.primary
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier.padding(padding).padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Button(onClick = {
-                backupLauncher.launch("backup_${System.currentTimeMillis()}.json")
-            }) {
-                Text("Backup erstellen")
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(onClick = {
-                importLauncher.launch(arrayOf("application/json"))
-            }) {
                 Text("Backup importieren")
             }
         }
