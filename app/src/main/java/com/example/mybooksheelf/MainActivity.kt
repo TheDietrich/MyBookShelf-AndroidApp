@@ -70,6 +70,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.AlertDialog
 import androidx.compose.material.Divider
 import androidx.compose.ui.unit.Dp
+import androidx.compose.material.RadioButton
+import androidx.compose.material.Surface
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.ui.graphics.vector.ImageVector
 
 
 @Composable
@@ -164,6 +168,16 @@ class MangaViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteSpecialSeries(series: SpecialSeriesEntity) = viewModelScope.launch {
         MangaDatabase.getDatabase(getApplication()).specialSeriesDao().delete(series)
     }
+
+    fun updateMangaStatus(manga: MangaEntity, isCompleted: Boolean, nextVolumeDate: String?) = viewModelScope.launch {
+        val updated = manga.copy(
+            isCompleted = isCompleted,
+            nextVolumeDate = nextVolumeDate
+        )
+        MangaDatabase.getDatabase(getApplication()).mangaDao().update(updated)
+        _updateSuccess.value = true
+    }
+
 }
 
 @OptIn(ExperimentalMaterialApi::class)
@@ -486,6 +500,21 @@ fun MangaListItem(
                             text = "Gelesen: ${manga.aktuellerBand}/${manga.gekaufteBände}",
                             style = MaterialTheme.typography.body2
                         )
+
+                        // Neuer Abschnitt für den Status
+                        if (manga.isCompleted) {
+                            Text(
+                                text = "Status: Abgeschlossen",
+                                style = MaterialTheme.typography.caption,
+                                color = MaterialTheme.colors.primary
+                            )
+                        } else if (!manga.nextVolumeDate.isNullOrBlank()) {
+                            Text(
+                                text = "Nächster Band: ${manga.nextVolumeDate}",
+                                style = MaterialTheme.typography.caption,
+                                color = MaterialTheme.colors.primary
+                            )
+                        }
                     }
                 }
             }
@@ -651,11 +680,12 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
     val mangaList by viewModel.mangaList.collectAsState(initial = emptyList())
     val manga = mangaList.find { it.id == mangaId }
 
+    // Zustände für Haupt-Buchdetails
     var currentVolume by remember { mutableStateOf("0") }
     var ownedVolumes by remember { mutableStateOf("0") }
     var menuExpanded by remember { mutableStateOf(false) }
 
-    // Cover Picker
+    // Bild-Auswahl
     val context = LocalContext.current
     val coverPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -668,7 +698,7 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
         }
     }
 
-    // Hauptmanga-Daten initialisieren
+    // Initiale Werte übernehmen
     LaunchedEffect(manga) {
         if (manga != null) {
             currentVolume = manga.aktuellerBand.toString()
@@ -701,6 +731,47 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
     var editingSeriesId by remember { mutableStateOf<String?>(null) }
     var editingSeriesName by remember { mutableStateOf("") }
     var showEditSeriesDialog by remember { mutableStateOf(false) }
+
+    // --- Veröffentlichungstatus-Dialog ---
+    var showStatusDialog by remember { mutableStateOf(false) }
+
+    // Temporäre States für den Dialog:
+    //   - ob abgeschlossen
+    //   - ob Datum bekannt (falls nicht abgeschlossen)
+    //   - ob Datum unbekannt
+    var tempIsCompleted by remember { mutableStateOf(false) }
+    var tempNextVolumeDate by remember { mutableStateOf("") }
+    var tempIsUnknown by remember { mutableStateOf(false) }
+
+    // Beim Öffnen des Screens übernehmen wir die DB-Werte in die Temp-Felder
+    LaunchedEffect(manga) {
+        manga?.let { currentManga ->
+            tempIsCompleted = currentManga.isCompleted
+            val dbDate = currentManga.nextVolumeDate
+            when {
+                currentManga.isCompleted -> {
+                    // abgeschlossen
+                    tempNextVolumeDate = ""
+                    tempIsUnknown = false
+                }
+                dbDate == null -> {
+                    // gar kein Status gesetzt
+                    tempNextVolumeDate = ""
+                    tempIsUnknown = false
+                }
+                dbDate == "UNKNOWN" -> {
+                    // Laufend (Datum unbekannt)
+                    tempNextVolumeDate = ""
+                    tempIsUnknown = true
+                }
+                else -> {
+                    // Laufend (Datum bekannt)
+                    tempNextVolumeDate = dbDate
+                    tempIsUnknown = false
+                }
+            }
+        }
+    }
 
     Scaffold(
         backgroundColor = MaterialTheme.colors.background,
@@ -740,7 +811,6 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
             )
         }
     ) { padding ->
-        // Hier wird der Inhalt scrollbar gemacht
         Column(
             modifier = Modifier
                 .padding(padding)
@@ -748,7 +818,8 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                 .verticalScroll(rememberScrollState())
         ) {
             manga?.let { currentManga ->
-                // --- (1) Haupt-Buchdetails ---
+
+                // Cover
                 val coverModel = if (currentManga.coverUri.isNullOrBlank()) null else currentManga.coverUri
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
@@ -764,6 +835,7 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                 )
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // Eingabefelder für aktuellen/g ekaufte Bände
                 NumberInputField(
                     value = currentVolume,
                     onValueChange = { currentVolume = it },
@@ -775,8 +847,23 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                     onValueChange = { ownedVolumes = it },
                     label = "Gekaufte Bände"
                 )
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // --- (2) Sonderreihen anzeigen, wenn vorhanden ---
+                // Status-Anzeige (nur, wenn tatsächlich etwas gesetzt wurde)
+                when {
+                    currentManga.isCompleted -> {
+                        MangaStatusBadge(statusText = "Status: Abgeschlossen")
+                    }
+                    currentManga.nextVolumeDate == "UNKNOWN" -> {
+                        MangaStatusBadge(statusText = "Status: Laufend (Datum unbekannt)")
+                    }
+                    !currentManga.nextVolumeDate.isNullOrBlank() -> {
+                        MangaStatusBadge(statusText = "Nächster Band am ${currentManga.nextVolumeDate}")
+                    }
+                    // Falls isCompleted=false und nextVolumeDate=null => gar kein Status -> zeige nichts
+                }
+
+                // Sonderreihen nur anzeigen, wenn welche existieren
                 if (specialSeriesList.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(24.dp))
                     DividerWithText(text = "Sonderreihen")
@@ -801,8 +888,9 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                     }
                 }
 
-                // --- (3) Zwei Buttons am Ende ---
                 Spacer(modifier = Modifier.height(24.dp))
+
+                // Button "Aktualisieren"
                 Button(
                     onClick = {
                         viewModel.updateManga(
@@ -816,15 +904,29 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                 ) {
                     Text("Aktualisieren")
                 }
+                Spacer(modifier = Modifier.height(8.dp))
 
-                Spacer(modifier = Modifier.height(8.dp)) // Kleinerer Abstand
-
+                // Button "Sonderreihen anlegen"
                 Button(
                     onClick = { showAddSeriesDialog = true },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Sonderreihen anlegen")
                 }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Button "Veröffentlichungsstatus"
+                Button(
+                    onClick = {
+                        // Wenn der Nutzer den Dialog öffnet, übernehmen wir die aktuellen Werte
+                        // (siehe LaunchedEffect weiter oben, der das ebenfalls tut).
+                        showStatusDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Veröffentlichungsstatus")
+                }
+
             } ?: Text(
                 "Buch nicht gefunden",
                 modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -832,8 +934,11 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
         }
     }
 
-    // --- (4) Dialoge ---
+    // --------------------------------------
+    // DIALOGE
+    // --------------------------------------
 
+    // Dialog: Neue Sonderreihe
     if (showAddSeriesDialog) {
         AlertDialog(
             onDismissRequest = { showAddSeriesDialog = false },
@@ -870,6 +975,7 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
         )
     }
 
+    // Dialog: Sonderreihe umbenennen
     if (showEditSeriesDialog && editingSeriesId != null) {
         AlertDialog(
             onDismissRequest = { showEditSeriesDialog = false },
@@ -902,7 +1008,101 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
             }
         )
     }
+
+    // Dialog: Veröffentlichungsstatus
+    if (showStatusDialog) {
+        AlertDialog(
+            onDismissRequest = { showStatusDialog = false },
+            title = { Text("Veröffentlichungsstatus festlegen") },
+            text = {
+                Column {
+                    // Abgeschlossen
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = tempIsCompleted,
+                            onClick = {
+                                tempIsCompleted = true
+                                tempNextVolumeDate = ""
+                                tempIsUnknown = false
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Abgeschlossen")
+                    }
+
+                    // Laufend (Datum bekannt)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = (!tempIsCompleted && !tempIsUnknown),
+                            onClick = {
+                                tempIsCompleted = false
+                                tempIsUnknown = false
+                                // tempNextVolumeDate bleibt erhalten
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Laufend (Datum bekannt)")
+                    }
+
+                    if (!tempIsCompleted && !tempIsUnknown) {
+                        OutlinedTextField(
+                            value = tempNextVolumeDate,
+                            onValueChange = { tempNextVolumeDate = it },
+                            label = { Text("Nächster Band am (z.B. 2025-08-01)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    // Laufend (Datum unbekannt)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = (!tempIsCompleted && tempIsUnknown),
+                            onClick = {
+                                tempIsCompleted = false
+                                tempIsUnknown = true
+                                tempNextVolumeDate = ""
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Laufend (Datum unbekannt)")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val currentManga = manga ?: return@Button
+
+                    // Bauen wir den finalen Zustand
+                    val finalIsCompleted = tempIsCompleted
+                    val finalNextVolumeDate: String? = when {
+                        finalIsCompleted -> null
+                        !finalIsCompleted && tempIsUnknown -> "UNKNOWN"
+                        else -> {
+                            // falls der Nutzer nichts eingegeben hat, kann es auch "" sein
+                            if (tempNextVolumeDate.isBlank()) null else tempNextVolumeDate
+                        }
+                    }
+
+                    viewModel.updateMangaStatus(
+                        manga = currentManga,
+                        isCompleted = finalIsCompleted,
+                        nextVolumeDate = finalNextVolumeDate
+                    )
+                    showStatusDialog = false
+                }) {
+                    Text("Speichern")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showStatusDialog = false }) {
+                    Text("Abbrechen")
+                }
+            }
+        )
+    }
 }
+
+
 
 
 
@@ -1003,6 +1203,39 @@ fun DividerWithText(
         )
     }
 }
+
+@Composable
+fun MangaStatusBadge(
+    statusText: String,
+    modifier: Modifier = Modifier,
+    icon: ImageVector = Icons.Filled.Info,
+    backgroundColor: Color = MaterialTheme.colors.primary.copy(alpha = 0.15f)
+) {
+    // Eine kleine "Chip"-ähnliche Oberfläche
+    Surface(
+        color = backgroundColor,
+        shape = MaterialTheme.shapes.small, // abgerundete Ecken
+        modifier = modifier
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colors.primary
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.body2,
+                color = MaterialTheme.colors.onSurface
+            )
+        }
+    }
+}
+
 
 
 

@@ -8,7 +8,10 @@ import java.util.UUID
 data class MangaEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val titel: String,
-    val coverUri: String?, // Als String gespeichert
+    val coverUri: String? = null,
     val aktuellerBand: Int,
-    val gekaufteBände: Int
+    val gekaufteBände: Int,
+    val isCompleted: Boolean = false,        // <--- Neu
+    val nextVolumeDate: String? = null       // <--- Neu
 )
+
