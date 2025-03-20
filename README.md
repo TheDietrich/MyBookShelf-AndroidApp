@@ -21,12 +21,7 @@ MyBookSheelf ist eine Android‑App, die in Kotlin mit Jetpack Compose entwickel
 
 ## Screenshots
 
-_Füge hier Screenshots der wichtigsten Bildschirme ein, z. B.:_
-
-- Startseite
-- Manga‑Details (inklusive Sonderreihen und Veröffentlichungsstatus‑Dialog)
-- Backup‑/Restore‑Ansicht
-- Einstellungen (Dark Mode)
+Bilder Folgen...
 
 ## Installation
 
