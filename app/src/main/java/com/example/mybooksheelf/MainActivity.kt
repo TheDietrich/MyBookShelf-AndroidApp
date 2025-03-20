@@ -820,6 +820,11 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
     var editingSeriesName by remember { mutableStateOf("") }
     var showEditSeriesDialog by remember { mutableStateOf(false) }
 
+    //Umbennen der hauptreihe
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var newTitle by remember { mutableStateOf(manga?.titel ?: "") }
+
+
     // --- Veröffentlichungstatus-Dialog ---
     var showStatusDialog by remember { mutableStateOf(false) }
 
@@ -887,12 +892,50 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                         }
                         DropdownMenuItem(onClick = {
                             menuExpanded = false
+                            // Neuer Menüeintrag: Titel anpassen
+                            newTitle = manga?.titel ?: ""
+                            showRenameDialog = true
+                        }) {
+                            Text("Titel anpassen")
+                        }
+                        DropdownMenuItem(onClick = {
+                            menuExpanded = false
                             manga?.let { toDelete ->
                                 viewModel.deleteManga(toDelete)
                             }
                         }) {
                             Text("Löschen")
                         }
+                    }
+                    // Direkt unterhalb des DropdownMenus (nachdem die TopAppBar fertig ist) füge den Dialog ein:
+                    if (showRenameDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showRenameDialog = false },
+                            title = { Text("Titel anpassen") },
+                            text = {
+                                OutlinedTextField(
+                                    value = newTitle,
+                                    onValueChange = { newTitle = it },
+                                    label = { Text("Neuer Titel") },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            },
+                            confirmButton = {
+                                Button(onClick = {
+                                    manga?.let { currentManga ->
+                                        viewModel.updateManga(currentManga.copy(titel = newTitle))
+                                    }
+                                    showRenameDialog = false
+                                }) {
+                                    Text("Speichern")
+                                }
+                            },
+                            dismissButton = {
+                                Button(onClick = { showRenameDialog = false }) {
+                                    Text("Abbrechen")
+                                }
+                            }
+                        )
                     }
                 },
                 backgroundColor = MaterialTheme.colors.primary
