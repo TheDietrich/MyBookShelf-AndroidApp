@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.rememberDismissState
 import androidx.compose.material.SwipeToDismiss
 import androidx.compose.runtime.*
@@ -74,16 +75,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.AlertDialog
 import androidx.compose.material.Divider
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material.RadioButton
 import androidx.compose.material.Surface
+import androidx.compose.material.TextFieldDefaults
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-
-
-
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.runtime.LaunchedEffect
 
 
 
@@ -456,14 +461,99 @@ fun MangaListScreen(navController: NavController) {
     val viewModel: MangaViewModel = viewModel()
     val mangaList by viewModel.mangaList.collectAsState(initial = emptyList())
 
+    // Suchzustände
+    var isSearchActive by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    // Fokus-Requester für das Suchfeld
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(isSearchActive) {
+        if (isSearchActive) {
+            focusRequester.requestFocus()
+        }
+    }
+
+    // Gefilterte Liste
+    val filteredManga = if (searchQuery.isBlank()) {
+        mangaList
+    } else {
+        mangaList.filter { it.titel.contains(searchQuery, ignoreCase = true) }
+    }
+
     Scaffold(
         backgroundColor = MaterialTheme.colors.background,
         topBar = {
             TopAppBar(
-                title = { Text("My Bookshelf") },
+                title = {
+                    if (isSearchActive) {
+                        // Statt das TextField voll breit zu machen, in eine kleinere Surface fassen und zentrieren
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Surface(
+                                shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colors.primary.copy(alpha = 0.15f),
+                                modifier = Modifier
+                                    .fillMaxWidth(0.8f)   // ca. 80% der Breite
+                                    .height(IntrinsicSize.Min)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Search,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colors.onPrimary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    OutlinedTextField(
+                                        value = searchQuery,
+                                        onValueChange = { searchQuery = it },
+                                        placeholder = { Text("Suche nach Titel...") },
+                                        singleLine = true,
+                                        textStyle = LocalTextStyle.current.copy(
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colors.onPrimary
+                                        ),
+                                        colors = TextFieldDefaults.outlinedTextFieldColors(
+                                            backgroundColor = Color.Transparent,
+                                            focusedBorderColor = Color.Transparent,
+                                            unfocusedBorderColor = Color.Transparent,
+                                            textColor = MaterialTheme.colors.onPrimary,
+                                            cursorColor = MaterialTheme.colors.onPrimary,
+                                            placeholderColor = MaterialTheme.colors.onPrimary.copy(alpha = 0.5f)
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .focusRequester(focusRequester)
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text("My Bookshelf")
+                    }
+                },
                 actions = {
-                    IconButton(onClick = { navController.navigate("settings") }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")
+                    if (isSearchActive) {
+                        // "Close"-Button
+                        IconButton(onClick = {
+                            isSearchActive = false
+                            searchQuery = ""
+                        }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Suche beenden")
+                        }
+                    } else {
+                        // "Search"-Button
+                        IconButton(onClick = { isSearchActive = true }) {
+                            Icon(Icons.Filled.Search, contentDescription = "Suche")
+                        }
+                        // "Settings"-Button
+                        IconButton(onClick = { navController.navigate("settings") }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")
+                        }
                     }
                 },
                 backgroundColor = MaterialTheme.colors.primary
@@ -483,12 +573,15 @@ fun MangaListScreen(navController: NavController) {
                 .padding(padding)
                 .padding(8.dp)
         ) {
-            items(mangaList) { manga ->
+            items(filteredManga) { manga ->
                 MangaListItem(manga, navController, viewModel)
             }
         }
     }
 }
+
+
+
 
 fun readFileAsBase64(path: String): String? {
     val file = File(path)
