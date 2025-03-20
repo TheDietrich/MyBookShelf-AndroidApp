@@ -19,8 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.Button
 import androidx.compose.material.Card
-import androidx.compose.material.DismissDirection
-import androidx.compose.material.DismissValue
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.ExperimentalMaterialApi
@@ -39,14 +37,11 @@ import androidx.compose.material.lightColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.rememberDismissState
-import androidx.compose.material.SwipeToDismiss
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -574,7 +569,7 @@ fun MangaListScreen(navController: NavController) {
                 .padding(8.dp)
         ) {
             items(filteredManga) { manga ->
-                MangaListItem(manga, navController, viewModel)
+                MangaListItem(manga, navController)
             }
         }
     }
@@ -603,115 +598,75 @@ fun writeFileFromBase64(context: Context, base64: String): String {
 fun MangaListItem(
     manga: MangaEntity,
     navController: NavController,
-    viewModel: MangaViewModel
 ) {
-    val dismissState = rememberDismissState(
-        confirmStateChange = { newDismissValue ->
-            if (newDismissValue == DismissValue.DismissedToEnd) {
-                viewModel.deleteManga(manga)
-                true
-            } else false
-        }
-    )
+    // Statt SwipeToDismiss nutzen wir direkt eine Card mit Clickable
+    Card(
+        elevation = 6.dp,
+        backgroundColor = MaterialTheme.colors.surface,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable { navController.navigate("mangaDetail/${manga.id}") }
+    ) {
+        Row(modifier = Modifier.padding(16.dp)) {
+            val coverModel = if (manga.coverUri.isNullOrBlank()) null else manga.coverUri
 
-    SwipeToDismiss(
-        state = dismissState,
-        directions = setOf(DismissDirection.EndToStart),
-        background = {
-            // Rote Card mit passender Größe (damit nichts übersteht)
-            Card(
-                elevation = 6.dp,
-                backgroundColor = MaterialTheme.colors.error,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Delete,
-                        contentDescription = "Löschen",
-                        tint = Color.White
+            // Bild / Placeholder
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(coverModel)
+                    .fallback(R.drawable.placeholder)
+                    .error(R.drawable.placeholder)
+                    .build(),
+                contentDescription = "Cover",
+                modifier = Modifier.size(100.dp),
+                contentScale = ContentScale.Crop
+            )
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Titel und Fortschritt
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = manga.titel,
+                    style = MaterialTheme.typography.h6,
+                    color = MaterialTheme.colors.primary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val progress = manga.aktuellerBand.toFloat() /
+                        manga.gekaufteBände.coerceAtLeast(1).toFloat()
+
+                LinearProgressIndicator(
+                    progress = progress,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colors.primaryVariant
+                )
+
+                Text(
+                    text = "Gelesen: ${manga.aktuellerBand}/${manga.gekaufteBände}",
+                    style = MaterialTheme.typography.body2
+                )
+
+                // Status-Anzeige
+                if (manga.isCompleted) {
+                    Text(
+                        text = "Status: Abgeschlossen",
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.primary
+                    )
+                } else if (!manga.nextVolumeDate.isNullOrBlank()) {
+                    Text(
+                        text = "Nächster Band: ${manga.nextVolumeDate}",
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.primary
                     )
                 }
             }
-        },
-        dismissContent = {
-            Card(
-                elevation = 6.dp,
-                backgroundColor = MaterialTheme.colors.surface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-                    .clickable {
-                        navController.navigate("mangaDetail/${manga.id}")
-                    }
-            ) {
-                Row(modifier = Modifier.padding(16.dp)) {
-                    val coverModel = if (manga.coverUri.isNullOrBlank()) null else manga.coverUri
-
-                    // Bild / Placeholder
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(coverModel)
-                            .fallback(R.drawable.placeholder)
-                            .error(R.drawable.placeholder)
-                            .build(),
-                        contentDescription = "Cover",
-                        modifier = Modifier.size(100.dp),
-                        contentScale = ContentScale.Crop
-                    )
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    // Titel und Fortschritt
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = manga.titel,
-                            style = MaterialTheme.typography.h6,
-                            color = MaterialTheme.colors.primary
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        val progress = manga.aktuellerBand.toFloat() /
-                                manga.gekaufteBände.coerceAtLeast(1).toFloat()
-
-                        LinearProgressIndicator(
-                            progress = progress,
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colors.primaryVariant
-                        )
-
-                        Text(
-                            text = "Gelesen: ${manga.aktuellerBand}/${manga.gekaufteBände}",
-                            style = MaterialTheme.typography.body2
-                        )
-
-                        // Neuer Abschnitt für den Status
-                        if (manga.isCompleted) {
-                            Text(
-                                text = "Status: Abgeschlossen",
-                                style = MaterialTheme.typography.caption,
-                                color = MaterialTheme.colors.primary
-                            )
-                        } else if (!manga.nextVolumeDate.isNullOrBlank()) {
-                            Text(
-                                text = "Nächster Band: ${manga.nextVolumeDate}",
-                                style = MaterialTheme.typography.caption,
-                                color = MaterialTheme.colors.primary
-                            )
-                        }
-                    }
-                }
-            }
         }
-    )
+    }
 }
+
 
 
 /** Neues Buch hinzufügen (ohne KeyboardOptions). */
