@@ -1,4 +1,4 @@
-package com.example.mybooksheelf
+package com.my.bookshelf
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4

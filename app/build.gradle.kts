@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.mybooksheelf"
+    namespace = "com.my.bookshelf"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.mybooksheelf"
+        applicationId = "com.my.bookshelf"
         minSdk = 30
         targetSdk = 35
         versionCode = 1
@@ -18,8 +18,22 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // 1) Signing-Konfiguration hinzufügen
+    signingConfigs {
+        create("release") {
+            // Windows-Pfade funktionieren in Kotlin DSL i. d. R. auch mit Forward-Slashes
+            storeFile = file("C:/Users/jonas/Nextcloud/Programier_Projekte/MyAndroidKeyStore.jks")
+            // Wichtig: Dollarzeichen müssen mit '\' escaped werden
+            storePassword = "n\$EzGtyMx5w4qqHKm*%@S7J%C"
+            keyAlias = "mybookshelf"
+            keyPassword = "n\$EzGtyMx5w4qqHKm*%@S7J%C"
+        }
+    }
+
     buildTypes {
-        release {
+        // 2) release-Build mit obiger Signing-Konfiguration verknüpfen
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -27,6 +41,7 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
