@@ -1,4 +1,4 @@
-package com.example.mybooksheelf
+package com.my.bookshelf
 
 import org.junit.Test
 

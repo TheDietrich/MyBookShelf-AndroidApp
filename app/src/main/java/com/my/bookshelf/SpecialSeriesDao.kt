@@ -3,7 +3,7 @@
  * Date: 18.03.2025
  */
 
-package com.example.mybooksheelf
+package com.my.bookshelf
 
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow

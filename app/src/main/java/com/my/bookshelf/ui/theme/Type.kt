@@ -1,4 +1,4 @@
-package com.example.mybooksheelf.ui.theme
+package com.my.bookshelf.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
