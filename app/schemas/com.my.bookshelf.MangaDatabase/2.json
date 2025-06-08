@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 2,
-    "identityHash": "9f6060a80abcfb687d6ba32d4e6e600e",
+    "identityHash": "223276c43847fbcb9a46ffc188e84bbe",
     "entities": [
       {
         "tableName": "manga_table",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `titel` TEXT NOT NULL, `coverUri` TEXT, `aktuellerBand` INTEGER NOT NULL, `gekaufteBände` INTEGER NOT NULL, `isCompleted` INTEGER NOT NULL, `nextVolumeDate` TEXT, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `titel` TEXT NOT NULL, `coverUri` TEXT, `aktuellerBand` INTEGER NOT NULL, `gekaufteBände` INTEGER NOT NULL, `isCompleted` INTEGER NOT NULL, `nextVolumeDate` TEXT, `dateAdded` INTEGER NOT NULL, `lastModified` INTEGER NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -49,6 +49,18 @@
             "columnName": "nextVolumeDate",
             "affinity": "TEXT",
             "notNull": false
+          },
+          {
+            "fieldPath": "dateAdded",
+            "columnName": "dateAdded",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastModified",
+            "columnName": "lastModified",
+            "affinity": "INTEGER",
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -108,7 +120,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '9f6060a80abcfb687d6ba32d4e6e600e')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '223276c43847fbcb9a46ffc188e84bbe')"
     ]
   }
 }
