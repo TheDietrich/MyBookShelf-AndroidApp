@@ -5,6 +5,8 @@
 
 package com.my.bookshelf
 
+import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.net.Uri
@@ -21,7 +23,6 @@ import androidx.compose.material.Button
 import androidx.compose.material.Card
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
-import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.FloatingActionButton
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
@@ -36,7 +37,6 @@ import androidx.compose.material.darkColors
 import androidx.compose.material.lightColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -66,6 +66,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import android.util.Base64
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.AlertDialog
@@ -74,7 +75,9 @@ import androidx.compose.material.LocalTextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material.RadioButton
 import androidx.compose.material.Surface
-import androidx.compose.material.TextFieldDefaults
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.coroutines.flow.first
@@ -84,7 +87,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.runtime.LaunchedEffect
-
+import androidx.core.view.WindowCompat
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.toArgb
+import androidx.datastore.preferences.core.stringPreferencesKey
 
 
 @Composable
@@ -98,7 +104,7 @@ fun MyBookSheelfTheme(
         secondary = Color(0xFF03DAC6),     // Material Teal
         secondaryVariant = Color(0xFF018786),
         background = Color(0xFF121212),    // Standard Material Dark Mode-Hintergrund
-        surface = Color(0xFF1E1E1E),       // Etwas helleres Schwarz für Oberflächen
+        surface = Color(0xFF111111),       // Etwas helleres Schwarz für Oberflächen
         error = Color(0xFFCF6679),         // Standard-Error für Dark Mode
         onPrimary = Color.White,           // Weißer Text auf Orange
         onSecondary = Color.Black,         // Schwarzer Text auf Teal
@@ -137,11 +143,13 @@ class MangaViewModel(app: Application) : AndroidViewModel(app) {
     val updateSuccess: State<Boolean> = _updateSuccess
 
     fun addManga(manga: MangaEntity) = viewModelScope.launch {
-        dao.insert(manga)
+        val newManga = manga.copy(dateAdded = System.currentTimeMillis(), lastModified = System.currentTimeMillis())
+        dao.insert(newManga)
     }
 
     fun updateManga(manga: MangaEntity) = viewModelScope.launch {
-        dao.update(manga)
+        val updated = manga.copy(lastModified = System.currentTimeMillis())
+        dao.update(updated)
         _updateSuccess.value = true
     }
 
@@ -191,17 +199,21 @@ class MangaViewModel(app: Application) : AndroidViewModel(app) {
 
 }
 
-@OptIn(ExperimentalMaterialApi::class)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         super.onCreate(savedInstanceState)
+        // Nach setContent oder davor:
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
         setContent {
             MainApp()
         }
     }
 }
 
-@OptIn(ExperimentalMaterialApi::class)
+
+@SuppressLint("ContextCastToActivity")
 @Composable
 fun MainApp() {
     val navController = rememberNavController()
@@ -214,26 +226,46 @@ fun MainApp() {
         }
     }
 
-    // MaterialTheme-Ansatz
-    // Falls du ein eigenes Theme hast, nutze dort "darkColors()" / "lightColors()".
     MyBookSheelfTheme(darkTheme = darkTheme) {
-        NavHost(navController, startDestination = "mangaList") {
-            composable("mangaList") { MangaListScreen(navController) }
-            composable("mangaAdd") { MangaAddScreen(navController) }
-            composable("mangaDetail/{mangaId}") { backStackEntry ->
-                MangaDetailScreen(
-                    mangaId = backStackEntry.arguments?.getString("mangaId") ?: "",
-                    navController = navController
-                )
-            }
-            composable("settings") { SettingsScreen(navController) }
+        val primaryColor = MaterialTheme.colors.primary
+        val activity = LocalContext.current as Activity
+        val window = activity.window
 
+        SideEffect {
+            // Statusbar oben auf Theme-Primary setzen
+            window.statusBarColor = primaryColor.toArgb()
+            WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = false
+        }
+
+        // StatusBar Hintergrund-Layer
+        Box {
+            // 1. Ziehe oben einen "Balken" in Primary-Farbe genau so hoch wie die Statusbar
+            Spacer(
+                modifier = Modifier
+                    .background(primaryColor)
+                    .fillMaxWidth()
+                    .statusBarsPadding() // exakt so hoch wie Statusbar
+                    .height(0.dp) // Die Höhe kommt durch .statusBarsPadding()
+            )
+            // 2. App-Inhalt
+            NavHost(navController, startDestination = "mangaList") {
+                composable("mangaList") { MangaListScreen(navController) }
+                composable("mangaAdd") { MangaAddScreen(navController) }
+                composable("mangaDetail/{mangaId}") { backStackEntry ->
+                    MangaDetailScreen(
+                        mangaId = backStackEntry.arguments?.getString("mangaId") ?: "",
+                        navController = navController
+                    )
+                }
+                composable("settings") { SettingsScreen(navController) }
+            }
         }
     }
 }
 
+
+
 /** Settings-Screen (Dark Mode). */
-@OptIn(ExperimentalMaterialApi::class)
 @Composable
 fun SettingsScreen(navController: NavController) {
     val context = LocalContext.current
@@ -278,6 +310,7 @@ fun SettingsScreen(navController: NavController) {
                     }
 
                     // In ExportDto konvertieren
+
                     val coverB64 = if (!mangaEntity.coverUri.isNullOrBlank()) {
                         readFileAsBase64(mangaEntity.coverUri)
                     } else null
@@ -301,7 +334,9 @@ fun SettingsScreen(navController: NavController) {
                         gekaufteBaende = mangaEntity.gekaufteBände,
                         isCompleted = mangaEntity.isCompleted,       // Neu
                         nextVolumeDate = mangaEntity.nextVolumeDate, // Neu
-                        specialSeries = specialSeriesDto             // Neu
+                        specialSeries = specialSeriesDto,             // Ne
+                        dateAdded = mangaEntity.dateAdded,
+                        lastModified = mangaEntity.lastModified
                     )
                 }
 
@@ -353,6 +388,8 @@ fun SettingsScreen(navController: NavController) {
                         val isCompleted = dto.isCompleted ?: false
                         val nextVolumeDate = dto.nextVolumeDate // bleibt null, wenn nicht gesetzt
                         val specialSeriesList = dto.specialSeries ?: emptyList()
+                        val dateAdded = dto.dateAdded ?: System.currentTimeMillis()
+                        val lastModified = dto.lastModified ?: dateAdded
                         // Cover decodieren
                         val realCoverPath = dto.coverBase64?.let { b64 ->
                             writeFileFromBase64(context, b64)
@@ -365,7 +402,9 @@ fun SettingsScreen(navController: NavController) {
                             aktuellerBand = dto.aktuellerBand,
                             gekaufteBände = dto.gekaufteBaende,
                             isCompleted = isCompleted,
-                            nextVolumeDate = nextVolumeDate
+                            nextVolumeDate = nextVolumeDate,
+                            dateAdded = dateAdded,
+                            lastModified = lastModified
                         )
                         viewModel.addManga(mangaEntity)
                         // Sonderreihen einfügen
@@ -389,13 +428,14 @@ fun SettingsScreen(navController: NavController) {
 
 
     Scaffold(
+        modifier = Modifier.systemBarsPadding(), // <- hinzufügen
         backgroundColor = MaterialTheme.colors.background,
         topBar = {
             TopAppBar(
                 title = { Text("Einstellungen") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
                     }
                 },
                 backgroundColor = MaterialTheme.colors.primary
@@ -449,80 +489,92 @@ fun SettingsScreen(navController: NavController) {
 }
 
 
-/** Liste aller Mangas mit hellem Design. */
-@OptIn(ExperimentalMaterialApi::class)
+
+enum class MangaSortOrder(val displayName: String) {
+    TITLE_ASC("Titel A-Z"),
+    TITLE_DESC("Titel Z-A"),
+    DATE_ADDED_ASC("Hinzugefügt ↑"),
+    DATE_ADDED_DESC("Hinzugefügt ↓"),
+    DATE_MODIFIED_ASC("Zuletzt geändert ↑"),
+    DATE_MODIFIED_DESC("Zuletzt geändert ↓"),
+    COMPLETED_LAST("Abgeschlossen zuletzt")
+}
+
+
+val SORT_ORDER_KEY = stringPreferencesKey("mangaSortOrder")
+
+
+
 @Composable
 fun MangaListScreen(navController: NavController) {
     val viewModel: MangaViewModel = viewModel()
     val mangaList by viewModel.mangaList.collectAsState(initial = emptyList())
 
-    // Suchzustände
-    var isSearchActive by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
-
-    // Fokus-Requester für das Suchfeld
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(isSearchActive) {
-        if (isSearchActive) {
-            focusRequester.requestFocus()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // Sortierung aus DataStore laden und merken
+    var sortOrder by remember { mutableStateOf(MangaSortOrder.TITLE_ASC) }
+    LaunchedEffect(Unit) {
+        context.dataStore.data.collect { prefs ->
+            sortOrder = MangaSortOrder.entries.find {
+                it.name == prefs[SORT_ORDER_KEY]
+            } ?: MangaSortOrder.TITLE_ASC
         }
     }
 
-    // Gefilterte Liste
-    val filteredManga = if (searchQuery.isBlank()) {
-        mangaList
-    } else {
-        mangaList.filter { it.titel.contains(searchQuery, ignoreCase = true) }
+    var sortDropdownExpanded by remember { mutableStateOf(false) }
+    var isSearchActive by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(isSearchActive) {
+        if (isSearchActive) focusRequester.requestFocus()
     }
 
+    // Anwendung der Sortierung
+    val filteredManga = mangaList
+        .filter { it.titel.contains(searchQuery, ignoreCase = true) }
+        .let { list ->
+            when (sortOrder) {
+                MangaSortOrder.TITLE_ASC -> list.sortedBy { it.titel.lowercase() }
+                MangaSortOrder.TITLE_DESC -> list.sortedByDescending { it.titel.lowercase() }
+                MangaSortOrder.DATE_ADDED_ASC -> list.sortedBy { it.dateAdded }
+                MangaSortOrder.DATE_ADDED_DESC -> list.sortedByDescending { it.dateAdded }
+                MangaSortOrder.DATE_MODIFIED_ASC -> list.sortedBy { it.lastModified }
+                MangaSortOrder.DATE_MODIFIED_DESC -> list.sortedByDescending { it.lastModified }
+                MangaSortOrder.COMPLETED_LAST -> list.sortedWith(
+                    compareBy<MangaEntity> { it.isCompleted }.thenBy { it.titel.lowercase() }
+                )
+            }
+        }
+
+
     Scaffold(
+        modifier = Modifier.systemBarsPadding(),
         backgroundColor = MaterialTheme.colors.background,
         topBar = {
             TopAppBar(
                 title = {
                     if (isSearchActive) {
-                        // Statt das TextField voll breit zu machen, in eine kleinere Surface fassen und zentrieren
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
                             Surface(
                                 shape = MaterialTheme.shapes.medium,
                                 color = MaterialTheme.colors.primary.copy(alpha = 0.15f),
-                                modifier = Modifier
-                                    .fillMaxWidth(0.8f)   // ca. 80% der Breite
-                                    .height(IntrinsicSize.Min)
+                                modifier = Modifier.fillMaxWidth(0.8f).height(IntrinsicSize.Min)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Search,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colors.onPrimary
-                                    )
+                                    Icon(Icons.Filled.Search, contentDescription = null)
                                     Spacer(modifier = Modifier.width(8.dp))
                                     OutlinedTextField(
                                         value = searchQuery,
                                         onValueChange = { searchQuery = it },
                                         placeholder = { Text("Suche nach Titel...") },
                                         singleLine = true,
-                                        textStyle = LocalTextStyle.current.copy(
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colors.onPrimary
-                                        ),
-                                        colors = TextFieldDefaults.outlinedTextFieldColors(
-                                            backgroundColor = Color.Transparent,
-                                            focusedBorderColor = Color.Transparent,
-                                            unfocusedBorderColor = Color.Transparent,
-                                            textColor = MaterialTheme.colors.onPrimary,
-                                            cursorColor = MaterialTheme.colors.onPrimary,
-                                            placeholderColor = MaterialTheme.colors.onPrimary.copy(alpha = 0.5f)
-                                        ),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .focusRequester(focusRequester)
+                                        textStyle = LocalTextStyle.current.copy(fontSize = 14.sp),
+                                        modifier = Modifier.weight(1f).focusRequester(focusRequester)
                                     )
                                 }
                             }
@@ -533,7 +585,6 @@ fun MangaListScreen(navController: NavController) {
                 },
                 actions = {
                     if (isSearchActive) {
-                        // "Close"-Button
                         IconButton(onClick = {
                             isSearchActive = false
                             searchQuery = ""
@@ -541,11 +592,45 @@ fun MangaListScreen(navController: NavController) {
                             Icon(Icons.Filled.Close, contentDescription = "Suche beenden")
                         }
                     } else {
-                        // "Search"-Button
                         IconButton(onClick = { isSearchActive = true }) {
                             Icon(Icons.Filled.Search, contentDescription = "Suche")
                         }
-                        // "Settings"-Button
+                        // SORTIER-Icon mit Dropdown
+                        Box {
+                            IconButton(onClick = { sortDropdownExpanded = true }) {
+                                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sortieren")
+                            }
+                            DropdownMenu(
+                                expanded = sortDropdownExpanded,
+                                onDismissRequest = { sortDropdownExpanded = false },
+                            ) {
+                                MangaSortOrder.entries.forEach { order ->
+                                    DropdownMenuItem(
+                                        onClick = {
+                                            sortOrder = order
+                                            sortDropdownExpanded = false
+                                            scope.launch {
+                                                context.dataStore.edit { prefs ->
+                                                    prefs[SORT_ORDER_KEY] = order.name
+                                                }
+                                            }
+                                        }
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(order.displayName)
+                                            if (order == sortOrder) {
+                                                Spacer(modifier = Modifier.weight(1f))
+                                                Icon(
+                                                    imageVector = Icons.Filled.Check,
+                                                    contentDescription = "Ausgewählt",
+                                                    tint = MaterialTheme.colors.primary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         IconButton(onClick = { navController.navigate("settings") }) {
                             Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")
                         }
@@ -556,6 +641,7 @@ fun MangaListScreen(navController: NavController) {
         },
         floatingActionButton = {
             FloatingActionButton(
+                modifier = Modifier.navigationBarsPadding(),
                 onClick = { navController.navigate("mangaAdd") },
                 backgroundColor = MaterialTheme.colors.secondary
             ) {
@@ -564,9 +650,7 @@ fun MangaListScreen(navController: NavController) {
         }
     ) { padding ->
         LazyColumn(
-            modifier = Modifier
-                .padding(padding)
-                .padding(8.dp)
+            modifier = Modifier.padding(padding).padding(8.dp)
         ) {
             items(filteredManga) { manga ->
                 MangaListItem(manga, navController)
@@ -574,6 +658,7 @@ fun MangaListScreen(navController: NavController) {
         }
     }
 }
+
 
 
 
@@ -593,7 +678,6 @@ fun writeFileFromBase64(context: Context, base64: String): String {
 }
 
 /** Einzelner Eintrag mit SwipeToDismiss (grau als Background). */
-@OptIn(ExperimentalMaterialApi::class)
 @Composable
 fun MangaListItem(
     manga: MangaEntity,
@@ -670,7 +754,6 @@ fun MangaListItem(
 
 
 /** Neues Buch hinzufügen (ohne KeyboardOptions). */
-@OptIn(ExperimentalMaterialApi::class)
 @Composable
 fun MangaAddScreen(navController: NavController) {
     val viewModel: MangaViewModel = viewModel()
@@ -694,13 +777,14 @@ fun MangaAddScreen(navController: NavController) {
             (ownedVolumes.toIntOrNull() != null)
 
     Scaffold(
+        modifier = Modifier.systemBarsPadding(), // <- hinzufügen
         backgroundColor = MaterialTheme.colors.background,
         topBar = {
             TopAppBar(
                 title = { Text("Neues Buch hinzufügen") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
                     }
                 },
                 backgroundColor = MaterialTheme.colors.primary
@@ -763,7 +847,6 @@ fun MangaAddScreen(navController: NavController) {
  * Einfaches Eingabefeld mit +/− Buttons zum Ändern einer Zahl.
  * Keine KeyboardOptions mehr.
  */
-@OptIn(ExperimentalMaterialApi::class)
 @Composable
 fun NumberInputField(
     value: String,
@@ -809,7 +892,6 @@ fun NumberInputField(
  * Detail-Screen liest neu in "LaunchedEffect(manga)",
  * damit die Felder immer die korrekten DB-Werte zeigen.
  */
-@OptIn(ExperimentalMaterialApi::class)
 @Composable
 fun MangaDetailScreen(mangaId: String, navController: NavController) {
     val viewModel: MangaViewModel = viewModel()
@@ -915,13 +997,14 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
     }
 
     Scaffold(
+        modifier = Modifier.systemBarsPadding(),
         backgroundColor = MaterialTheme.colors.background,
         topBar = {
             TopAppBar(
                 title = { Text(manga?.titel ?: "Buchdetails") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
                     }
                 },
                 actions = {
@@ -1258,7 +1341,7 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                         !finalIsCompleted && tempIsUnknown -> "UNKNOWN"
                         else -> {
                             // falls der Nutzer nichts eingegeben hat, kann es auch "" sein
-                            if (tempNextVolumeDate.isBlank()) null else tempNextVolumeDate
+                            tempNextVolumeDate.ifBlank { null }
                         }
                     }
 

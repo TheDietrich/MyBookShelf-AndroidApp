@@ -26,8 +26,12 @@ data class MangaExportDto(
     val gekaufteBaende: Int,
     val isCompleted: Boolean?,     // kann null sein, wenn altes Backup
     val nextVolumeDate: String?,   // kann null sein, wenn altes Backup
-    val specialSeries: List<SpecialSeriesExportDto>? // kann null sein, wenn altes Backup
-)
+    val specialSeries: List<SpecialSeriesExportDto>?, // kann null sein, wenn altes Backup
+    val dateAdded: Long?,
+    val lastModified: Long?
+) {
+
+}
 
 /**
  * Sonderreihe-Eintrag

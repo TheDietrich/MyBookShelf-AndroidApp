@@ -17,6 +17,8 @@ data class MangaEntity(
     val aktuellerBand: Int,
     val gekaufteBände: Int,
     val isCompleted: Boolean = false,        // <--- Neu
-    val nextVolumeDate: String? = null       // <--- Neu
+    val nextVolumeDate: String? = null,       // <--- Neu
+    val dateAdded: Long = System.currentTimeMillis(),      // hinzufügen
+    val lastModified: Long = System.currentTimeMillis()    // hinzufügen
 )
 
