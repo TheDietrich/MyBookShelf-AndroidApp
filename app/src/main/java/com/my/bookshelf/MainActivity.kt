@@ -5,9 +5,12 @@
 
 package com.my.bookshelf
 
+import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -66,6 +69,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import android.util.Base64
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.AlertDialog
@@ -84,7 +88,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.runtime.LaunchedEffect
+import androidx.core.view.WindowCompat
 
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 
 
 @Composable
@@ -194,14 +202,22 @@ class MangaViewModel(app: Application) : AndroidViewModel(app) {
 @OptIn(ExperimentalMaterialApi::class)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         super.onCreate(savedInstanceState)
+        // Nach setContent oder davor:
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        // Optional: Navigation bar divider entfernen (bei manchen Herstellern nötig)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
+        }
         setContent {
             MainApp()
         }
     }
 }
 
-@OptIn(ExperimentalMaterialApi::class)
+
+@SuppressLint("ContextCastToActivity")
 @Composable
 fun MainApp() {
     val navController = rememberNavController()
@@ -214,23 +230,44 @@ fun MainApp() {
         }
     }
 
-    // MaterialTheme-Ansatz
-    // Falls du ein eigenes Theme hast, nutze dort "darkColors()" / "lightColors()".
     MyBookSheelfTheme(darkTheme = darkTheme) {
-        NavHost(navController, startDestination = "mangaList") {
-            composable("mangaList") { MangaListScreen(navController) }
-            composable("mangaAdd") { MangaAddScreen(navController) }
-            composable("mangaDetail/{mangaId}") { backStackEntry ->
-                MangaDetailScreen(
-                    mangaId = backStackEntry.arguments?.getString("mangaId") ?: "",
-                    navController = navController
-                )
-            }
-            composable("settings") { SettingsScreen(navController) }
+        val primaryColor = MaterialTheme.colors.primary
+        val activity = LocalContext.current as Activity
+        val window = activity.window
 
+        SideEffect {
+            // Statusbar oben auf Theme-Primary setzen
+            window.statusBarColor = primaryColor.toArgb()
+            WindowCompat.getInsetsController(window, window.decorView)?.isAppearanceLightStatusBars = false
+        }
+
+        // StatusBar Hintergrund-Layer
+        Box {
+            // 1. Ziehe oben einen "Balken" in Primary-Farbe genau so hoch wie die Statusbar
+            Spacer(
+                modifier = Modifier
+                    .background(primaryColor)
+                    .fillMaxWidth()
+                    .statusBarsPadding() // exakt so hoch wie Statusbar
+                    .height(0.dp) // Die Höhe kommt durch .statusBarsPadding()
+            )
+            // 2. App-Inhalt
+            NavHost(navController, startDestination = "mangaList") {
+                composable("mangaList") { MangaListScreen(navController) }
+                composable("mangaAdd") { MangaAddScreen(navController) }
+                composable("mangaDetail/{mangaId}") { backStackEntry ->
+                    MangaDetailScreen(
+                        mangaId = backStackEntry.arguments?.getString("mangaId") ?: "",
+                        navController = navController
+                    )
+                }
+                composable("settings") { SettingsScreen(navController) }
+            }
         }
     }
 }
+
+
 
 /** Settings-Screen (Dark Mode). */
 @OptIn(ExperimentalMaterialApi::class)
@@ -389,6 +426,7 @@ fun SettingsScreen(navController: NavController) {
 
 
     Scaffold(
+        modifier = Modifier.systemBarsPadding(), // <- hinzufügen
         backgroundColor = MaterialTheme.colors.background,
         topBar = {
             TopAppBar(
@@ -476,6 +514,7 @@ fun MangaListScreen(navController: NavController) {
     }
 
     Scaffold(
+        modifier = Modifier.systemBarsPadding(), // <- hinzufügen
         backgroundColor = MaterialTheme.colors.background,
         topBar = {
             TopAppBar(
@@ -556,6 +595,7 @@ fun MangaListScreen(navController: NavController) {
         },
         floatingActionButton = {
             FloatingActionButton(
+                modifier = Modifier.navigationBarsPadding(),
                 onClick = { navController.navigate("mangaAdd") },
                 backgroundColor = MaterialTheme.colors.secondary
             ) {
@@ -694,6 +734,7 @@ fun MangaAddScreen(navController: NavController) {
             (ownedVolumes.toIntOrNull() != null)
 
     Scaffold(
+        modifier = Modifier.systemBarsPadding(), // <- hinzufügen
         backgroundColor = MaterialTheme.colors.background,
         topBar = {
             TopAppBar(
