@@ -92,6 +92,14 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.toArgb
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.compose.material.Checkbox
+import android.media.MediaRecorder
+import android.media.MediaPlayer
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Delete
+import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
+import androidx.compose.material.ButtonDefaults
 
 
 @Composable
@@ -153,6 +161,50 @@ class MangaViewModel(app: Application) : AndroidViewModel(app) {
         dao.update(updated)
         _updateSuccess.value = true
     }
+
+    // Audio-Notiz setzen/aktualisieren
+    fun setAudioNote(manga: MangaEntity, filePath: String) = viewModelScope.launch {
+        val updated = manga.copy(
+            audioNoteUri = filePath,
+            audioNoteUpdatedAt = System.currentTimeMillis(),
+            lastModified = System.currentTimeMillis()
+        )
+        dao.update(updated)
+    }
+
+    // Audio-Notiz entfernen
+    fun clearAudioNote(manga: MangaEntity) = viewModelScope.launch {
+        val updated = manga.copy(
+            audioNoteUri = null,
+            audioNoteUpdatedAt = null,
+            lastModified = System.currentTimeMillis()
+        )
+        dao.update(updated)
+    }
+
+    // NEU: Audio-Feature pro Manga an/aus schalten.
+    // Beim Deaktivieren wird die bestehende Datei gelöscht und Felder geleert.
+    fun setAudioNoteEnabled(manga: MangaEntity, enabled: Boolean) = viewModelScope.launch {
+        var filePathToDelete: String? = null
+        val updated = if (!enabled) {
+            filePathToDelete = manga.audioNoteUri
+            manga.copy(
+                audioNoteEnabled = false,
+                audioNoteUri = null,
+                audioNoteUpdatedAt = null,
+                lastModified = System.currentTimeMillis()
+            )
+        } else {
+            manga.copy(
+                audioNoteEnabled = true,
+                lastModified = System.currentTimeMillis()
+            )
+        }
+        dao.update(updated)
+        // Datei nach DB-Update best-effort entfernen
+        filePathToDelete?.let { runCatching { File(it).delete() } }
+    }
+
 
     fun deleteManga(manga: MangaEntity) = viewModelScope.launch {
         dao.delete(manga)
@@ -1003,6 +1055,10 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
         }
     }
 
+    //Audio An Aus
+    var showDisableAudioConfirm by remember { mutableStateOf(false) } // NEU
+
+
     // Umbenennen einer Sonderreihe
     var editingSeriesId by remember { mutableStateOf<String?>(null) }
     var editingSeriesName by remember { mutableStateOf("") }
@@ -1023,6 +1079,7 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
     var tempIsCompleted by remember { mutableStateOf(false) }
     var tempNextVolumeDate by remember { mutableStateOf("") }
     var tempIsUnknown by remember { mutableStateOf(false) }
+
 
     // Beim Öffnen des Screens übernehmen wir die DB-Werte in die Temp-Felder
     LaunchedEffect(manga) {
@@ -1081,7 +1138,6 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                         }
                         DropdownMenuItem(onClick = {
                             menuExpanded = false
-                            // Neuer Menüeintrag: Titel anpassen
                             newTitle = manga?.titel ?: ""
                             showRenameDialog = true
                         }) {
@@ -1095,7 +1151,39 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                         }) {
                             Text("Löschen")
                         }
+
+                        Divider()
+
+                        // NEU: Audio-Notiz aktiv (Checkbox)
+                        DropdownMenuItem(onClick = {
+                            // Toggle per Zeilenklick
+                            val current = manga?.audioNoteEnabled ?: false
+                            if (current) {
+                                // Ausschalten -> ggf. Warn-Dialog
+                                showDisableAudioConfirm = true
+                            } else {
+                                manga?.let { viewModel.setAudioNoteEnabled(it, true) }
+                            }
+                            menuExpanded = false
+                        }) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = manga?.audioNoteEnabled ?: false,
+                                    onCheckedChange = { checked ->
+                                        if (!checked) {
+                                            showDisableAudioConfirm = true
+                                        } else {
+                                            manga?.let { viewModel.setAudioNoteEnabled(it, true) }
+                                        }
+                                        menuExpanded = false
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Audio-Notiz aktiv")
+                            }
+                        }
                     }
+
                     // Direkt unterhalb des DropdownMenus (nachdem die TopAppBar fertig ist) füge den Dialog ein:
                     if (showRenameDialog) {
                         AlertDialog(
@@ -1182,6 +1270,17 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                     }
                     // Falls isCompleted=false und nextVolumeDate=null => gar kein Status -> zeige nichts
                 }
+
+                // Audio-Notiz (nur wenn aktiviert)
+                if (currentManga.audioNoteEnabled) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    AudioNoteCard(
+                        manga = currentManga,
+                        onSave = { path -> viewModel.setAudioNote(currentManga, path) },
+                        onDelete = { viewModel.clearAudioNote(currentManga) }
+                    )
+                }
+
 
                 // Sonderreihen nur anzeigen, wenn welche existieren
                 if (specialSeriesList.isNotEmpty()) {
@@ -1420,6 +1519,31 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
             }
         )
     }
+
+    // NEU: Bestätigen, dass Audio-Notiz deaktiviert wird (löscht Aufnahme)
+    if (showDisableAudioConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDisableAudioConfirm = false },
+            title = { Text("Audio-Notiz deaktivieren?") },
+            text = { Text("Wenn du die Audio-Notiz deaktivierst, wird die gespeicherte Aufnahme falls vorhanden gelöscht. Fortfahren?") },
+            confirmButton = {
+                Button(onClick = {
+                    val current = manga ?: return@Button
+                    // ggf. Wiedergabe stoppen und Datei löschen übernimmt ViewModel
+                    viewModel.setAudioNoteEnabled(current, false)
+                    showDisableAudioConfirm = false
+                }) {
+                    Text("Ja, löschen")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showDisableAudioConfirm = false }) {
+                    Text("Abbrechen")
+                }
+            }
+        )
+    }
+
 }
 
 
@@ -1437,6 +1561,7 @@ fun SpecialSeriesItem(
     var currentVolume by remember { mutableStateOf(series.aktuellerBand.toString()) }
     var ownedVolumes by remember { mutableStateOf(series.gekaufteBände.toString()) }
     var menuExpanded by remember { mutableStateOf(false) }
+
 
     Card(
         elevation = 4.dp,
@@ -1556,6 +1681,172 @@ fun MangaStatusBadge(
     }
 }
 
+@Composable
+fun AudioNoteCard(
+    manga: MangaEntity,
+    onSave: (String) -> Unit,
+    onDelete: () -> Unit
+) {
+    val context = LocalContext.current
+    var isRecording by remember { mutableStateOf(false) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var mediaRecorder: MediaRecorder? by remember { mutableStateOf(null) }
+    var mediaPlayer: MediaPlayer? by remember { mutableStateOf(null) }
+
+    // Runtime-Permission
+    var hasMicPermission by remember { mutableStateOf(false) }
+    val requestMicPermission = rememberLauncherForActivityResult(RequestPermission()) { granted ->
+        hasMicPermission = granted
+    }
+    LaunchedEffect(Unit) {
+        // simpler Versuch; wenn verweigert, fragen wir beim ersten Klick
+        hasMicPermission = context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    // Ziel-Datei für diese Reihe
+    fun audioFilePath(): String {
+        val file = File(context.filesDir, "audio_${manga.id}.m4a")
+        return file.absolutePath
+    }
+
+    fun startRecording() {
+        if (!hasMicPermission) {
+            requestMicPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        val path = audioFilePath()
+        mediaRecorder = MediaRecorder().apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setAudioEncodingBitRate(128_000)
+            setAudioSamplingRate(44_100)
+            setOutputFile(path)
+            prepare()
+            start()
+        }
+        isRecording = true
+    }
+
+    fun stopRecording(save: Boolean) {
+        try {
+            mediaRecorder?.apply {
+                stop()
+                release()
+            }
+        } catch (_: Exception) {}
+        mediaRecorder = null
+        isRecording = false
+        if (save) onSave(audioFilePath())
+    }
+
+    fun startPlayback() {
+        val path = manga.audioNoteUri ?: return
+        mediaPlayer = MediaPlayer().apply {
+            setDataSource(path)
+            prepare()
+            start()
+            setOnCompletionListener {
+                isPlaying = false
+                it.release()
+                mediaPlayer = null
+            }
+        }
+        isPlaying = true
+    }
+
+    fun stopPlayback() {
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+        } catch (_: Exception) {}
+        mediaPlayer = null
+        isPlaying = false
+    }
+
+    // UI
+    Card(
+        elevation = 4.dp,
+        backgroundColor = MaterialTheme.colors.surface,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Audio-Notiz", style = MaterialTheme.typography.h6, color = MaterialTheme.colors.primary)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 1) Aufnehmen / Stopp (Speichern)
+                Button(
+                    onClick = {
+                        if (!isRecording) startRecording() else stopRecording(save = true)
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = MaterialTheme.colors.primary,
+                        contentColor = MaterialTheme.colors.onPrimary
+                    )
+                ) {
+                    Icon(
+                        imageVector = if (!isRecording) Icons.Filled.Mic else Icons.Filled.Stop,
+                        contentDescription = if (!isRecording) "Aufnehmen" else "Stopp"
+                    )
+                }
+
+                // 2) Abspielen / Stopp
+                Button(
+                    onClick = {
+                        if (!isPlaying) startPlayback() else stopPlayback()
+                    },
+                    enabled = manga.audioNoteUri != null,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = MaterialTheme.colors.primary,
+                        contentColor = MaterialTheme.colors.onPrimary
+                    )
+                ) {
+                    Icon(
+                        imageVector = if (!isPlaying) Icons.Filled.PlayArrow else Icons.Filled.Stop,
+                        contentDescription = if (!isPlaying) "Abspielen" else "Stopp"
+                    )
+                }
+
+                // 3) Löschen
+                Button(
+                    onClick = {
+                        stopPlayback()
+                        onDelete()
+                        manga.audioNoteUri?.let { runCatching { File(it).delete() } }
+                    },
+                    enabled = manga.audioNoteUri != null,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = MaterialTheme.colors.error,
+                        contentColor = MaterialTheme.colors.onError
+                    )
+                ) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Löschen")
+                }
+            }
 
 
-
+            if (manga.audioNoteUpdatedAt != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Zuletzt aktualisiert: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm").format(java.util.Date(manga.audioNoteUpdatedAt))}",
+                    style = MaterialTheme.typography.caption
+                )
+            }
+        }
+    }
+}
