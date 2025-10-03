@@ -100,6 +100,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Delete
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
 import androidx.compose.material.ButtonDefaults
+import androidx.compose.material.icons.filled.BookmarkBorder
 
 
 @Composable
@@ -147,6 +148,9 @@ val Context.dataStore by preferencesDataStore(name = "settings")
 class MangaViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = MangaDatabase.getDatabase(app).mangaDao()
     val mangaList = dao.getAllManga()
+
+    private val wishlistDao = MangaDatabase.getDatabase(app).wishlistDao()
+    val wishlist: kotlinx.coroutines.flow.Flow<List<WishlistItemEntity>> = wishlistDao.getAll()
 
     private val _updateSuccess = mutableStateOf(false)
     val updateSuccess: State<Boolean> = _updateSuccess
@@ -250,6 +254,14 @@ class MangaViewModel(app: Application) : AndroidViewModel(app) {
         _updateSuccess.value = true
     }
 
+    fun addWishlistItem(title: String) = viewModelScope.launch {
+        if (title.isBlank()) return@launch
+        wishlistDao.insert(WishlistItemEntity(title = title.trim()))
+    }
+
+    fun deleteWishlistItem(item: WishlistItemEntity) = viewModelScope.launch {
+        wishlistDao.delete(item)
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -311,6 +323,7 @@ fun MainApp() {
                     )
                 }
                 composable("settings") { SettingsScreen(navController) }
+                composable("wishlist") { WishlistScreen(navController) }
             }
         }
     }
@@ -337,15 +350,14 @@ fun SettingsScreen(navController: NavController) {
     val mangaList by viewModel.mangaList.collectAsState(emptyList())
 
     // Launcher zum Erstellen eines Backups (Export)
-    // Launcher zum Erstellen eines Backups (Export)
     val backupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         uri?.let { documentUri ->
             context.contentResolver.openOutputStream(documentUri)?.use { stream ->
 
-                // 1) Alle Manga aus der DB laden
-                val allManga = mangaList // => already collectedAsState in your code
+                // 1) Alle Manga aus der DB (bereits via mangaList)
+                val allManga = mangaList
 
                 // 2) Für jedes Manga zusätzlich Sonderreihen laden
                 val backupMangaList = allManga.map { mangaEntity ->
@@ -357,18 +369,22 @@ fun SettingsScreen(navController: NavController) {
                                 .specialSeriesDao()
                                 .getSpecialSeriesForManga(mangaEntity.id)
                                 .first()
-                        } catch(e: NoSuchElementException) {
+                        } catch (e: NoSuchElementException) {
                             emptyList()
                         }
                     }
 
-                    // In ExportDto konvertieren
-
+                    // Cover als Base64
                     val coverB64 = if (!mangaEntity.coverUri.isNullOrBlank()) {
                         readFileAsBase64(mangaEntity.coverUri)
                     } else null
 
-                    // Sonderreihen in DTO-Objekte umwandeln
+                    // Audio als Base64
+                    val audioB64 = if (!mangaEntity.audioNoteUri.isNullOrBlank()) {
+                        readFileAsBase64(mangaEntity.audioNoteUri)
+                    } else null
+
+                    // Sonderreihen in DTO umwandeln
                     val specialSeriesDto = specialList.map { series ->
                         SpecialSeriesExportDto(
                             id = series.id,
@@ -385,21 +401,38 @@ fun SettingsScreen(navController: NavController) {
                         coverBase64 = coverB64,
                         aktuellerBand = mangaEntity.aktuellerBand,
                         gekaufteBaende = mangaEntity.gekaufteBände,
-                        isCompleted = mangaEntity.isCompleted,       // Neu
-                        nextVolumeDate = mangaEntity.nextVolumeDate, // Neu
-                        specialSeries = specialSeriesDto,             // Ne
+                        isCompleted = mangaEntity.isCompleted,
+                        nextVolumeDate = mangaEntity.nextVolumeDate,
+                        specialSeries = specialSeriesDto,
                         dateAdded = mangaEntity.dateAdded,
-                        lastModified = mangaEntity.lastModified
+                        lastModified = mangaEntity.lastModified,
+
+                        audioNoteEnabled = mangaEntity.audioNoteEnabled,
+                        audioBase64 = audioB64,
+                        audioUpdatedAt = mangaEntity.audioNoteUpdatedAt
                     )
                 }
 
-                // 3) In eine BackupData-Struktur stecken
+                // 3) Wunschliste laden
+                val wishlistItems: List<WishlistItemEntity> = runBlocking {
+                    MangaDatabase.getDatabase(context).wishlistDao().getAll().first()
+                }
+                val wishlistDto = wishlistItems.map {
+                    WishlistExportDto(
+                        id = it.id,
+                        title = it.title,
+                        dateAdded = it.dateAdded
+                    )
+                }
+
+                // 4) In BackupData packen (FORMAT v3)
                 val backupData = BackupData(
-                    version = 2, // Wir sagen, das ist unser "Format v2"
-                    mangaList = backupMangaList
+                    version = 3,
+                    mangaList = backupMangaList,
+                    wishlist = wishlistDto
                 )
 
-                // 4) Als JSON serialisieren und schreiben
+                // 5) JSON schreiben
                 val json = Gson().toJson(backupData)
                 stream.write(json.toByteArray())
             }
@@ -417,37 +450,46 @@ fun SettingsScreen(navController: NavController) {
                 val json = stream.bufferedReader().use { it.readText() }
                 // Import in einer Coroutine ausführen:
                 scope.launch {
-                    // Versuche zuerst, das Backup als komplettes Objekt zu parsen.
+                    // 1) Versuche zuerst neues Format (BackupData)
                     val backupData = try {
                         Gson().fromJson(json, BackupData::class.java)
                     } catch (e: Exception) {
-                        // Falls das fehlschlägt, versuche es als Array von MangaExportDto zu parsen
+                        // Fallback: altes Format (nur Liste MangaExportDto)
                         try {
-                            val mangaList: List<MangaExportDto> =
+                            val list: List<MangaExportDto> =
                                 Gson().fromJson(json, Array<MangaExportDto>::class.java).toList()
-                            // Erstelle BackupData mit einer alten Version (z.B. Version 1)
-                            BackupData(version = 1, mangaList = mangaList)
+                            BackupData(version = 1, mangaList = list, wishlist = null)
                         } catch (e: Exception) {
                             null
                         }
                     }
-                    if (backupData == null) {
-                        // Hier könntest du eine Fehlermeldung anzeigen oder anderweitig reagieren
-                        return@launch
-                    }
-                    // Für jedes Backup-Manga-DTO
+                    if (backupData == null) return@launch
+
+                    // 2) Für jedes Backup-Manga
                     backupData.mangaList.forEach { dto ->
-                        // Alte Backups haben eventuell die Felder nicht – hier Defaultwerte:
                         val isCompleted = dto.isCompleted ?: false
-                        val nextVolumeDate = dto.nextVolumeDate // bleibt null, wenn nicht gesetzt
+                        val nextVolumeDate = dto.nextVolumeDate
                         val specialSeriesList = dto.specialSeries ?: emptyList()
                         val dateAdded = dto.dateAdded ?: System.currentTimeMillis()
                         val lastModified = dto.lastModified ?: dateAdded
+
                         // Cover decodieren
                         val realCoverPath = dto.coverBase64?.let { b64 ->
-                            writeFileFromBase64(context, b64)
+                            writeFileFromBase64(context, b64) // schreibt .jpg
                         }
-                        // Manga in DB einfügen
+
+                        // Audio decodieren (falls vorhanden)
+                        val realAudioPath = dto.audioBase64?.let { b64 ->
+                            writeAudioFromBase64(context, b64, extension = "m4a")
+                        }
+                        val audioEnabled = when {
+                            dto.audioNoteEnabled != null -> dto.audioNoteEnabled
+                            realAudioPath != null -> true // wenn Audio vorliegt aber Flag fehlt -> aktiv
+                            else -> false
+                        }
+                        val audioUpdatedAt = dto.audioUpdatedAt
+
+                        // Manga einfügen/ersetzen
                         val mangaEntity = MangaEntity(
                             id = dto.id,
                             titel = dto.titel,
@@ -457,9 +499,13 @@ fun SettingsScreen(navController: NavController) {
                             isCompleted = isCompleted,
                             nextVolumeDate = nextVolumeDate,
                             dateAdded = dateAdded,
-                            lastModified = lastModified
+                            lastModified = lastModified,
+                            audioNoteUri = realAudioPath,
+                            audioNoteUpdatedAt = audioUpdatedAt,
+                            audioNoteEnabled = audioEnabled
                         )
                         viewModel.addManga(mangaEntity)
+
                         // Sonderreihen einfügen
                         specialSeriesList.forEach { sDto ->
                             val seriesEntity = SpecialSeriesEntity(
@@ -471,6 +517,20 @@ fun SettingsScreen(navController: NavController) {
                             )
                             viewModel.addSpecialSeries(seriesEntity)
                         }
+                    }
+
+                    // 3) Wunschliste importieren (falls vorhanden)
+                    val wl = backupData.wishlist ?: emptyList()
+                    val wishlistDao = MangaDatabase.getDatabase(context).wishlistDao()
+                    wl.forEach { w ->
+                        // Original-IDs & Zeitstempel erhalten
+                        wishlistDao.insert(
+                            WishlistItemEntity(
+                                id = w.id,
+                                title = w.title,
+                                dateAdded = w.dateAdded
+                            )
+                        )
                     }
                 }
             }
@@ -741,6 +801,11 @@ fun MangaListScreen(navController: NavController) {
                                 }
                             }
                         }
+                        // NEU: Wunschliste
+                        IconButton(onClick = { navController.navigate("wishlist") }) {
+                            Icon(Icons.Filled.BookmarkBorder, contentDescription = "Wunschliste")
+                        }
+
                         IconButton(onClick = { navController.navigate("settings") }) {
                             Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")
                         }
@@ -770,9 +835,6 @@ fun MangaListScreen(navController: NavController) {
 }
 
 
-
-
-
 fun readFileAsBase64(path: String): String? {
     val file = File(path)
     if (!file.exists()) return null
@@ -786,6 +848,14 @@ fun writeFileFromBase64(context: Context, base64: String): String {
     file.outputStream().use { it.write(bytes) }
     return file.absolutePath
 }
+
+fun writeAudioFromBase64(context: Context, base64: String, extension: String = "m4a"): String {
+    val bytes = Base64.decode(base64, Base64.DEFAULT)
+    val file = File(context.filesDir, "${UUID.randomUUID()}.$extension")
+    file.outputStream().use { it.write(bytes) }
+    return file.absolutePath
+}
+
 
 /** Einzelner Eintrag mit SwipeToDismiss (grau als Background). */
 @Composable
@@ -1548,6 +1618,82 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
 
 
 
+@Composable
+fun WishlistScreen(navController: NavController) {
+    val viewModel: MangaViewModel = viewModel()
+    val items by viewModel.wishlist.collectAsState(initial = emptyList())
+    var input by remember { mutableStateOf("") }
+
+    Scaffold(
+        modifier = Modifier.systemBarsPadding(),
+        backgroundColor = MaterialTheme.colors.background,
+        topBar = {
+            TopAppBar(
+                title = { Text("Wunschliste") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
+                    }
+                },
+                backgroundColor = MaterialTheme.colors.primary
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = {
+                    if (input.isNotBlank()) {
+                        viewModel.addWishlistItem(input)
+                        input = ""
+                    }
+                },
+                backgroundColor = MaterialTheme.colors.secondary,
+                modifier = Modifier.navigationBarsPadding()
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = "Hinzufügen")
+            }
+        }
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).padding(12.dp)) {
+
+            // Eingabe
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                label = { Text("Manga-Titel (Freitext)") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+
+            // Liste
+            LazyColumn {
+                items(items) { itx ->
+                    Card(
+                        elevation = 4.dp,
+                        backgroundColor = MaterialTheme.colors.surface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Text(
+                                itx.title,
+                                style = MaterialTheme.typography.h6,
+                                color = MaterialTheme.colors.primary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { viewModel.deleteWishlistItem(itx) }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "Löschen")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 
 

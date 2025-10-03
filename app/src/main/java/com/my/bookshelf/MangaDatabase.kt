@@ -10,10 +10,11 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import android.content.Context
 
-@Database(entities = [MangaEntity::class, SpecialSeriesEntity::class], version = 4)
+@Database(entities = [MangaEntity::class, SpecialSeriesEntity::class, WishlistItemEntity::class], version = 5)
 abstract class MangaDatabase : RoomDatabase() {
     abstract fun mangaDao(): MangaDao
     abstract fun specialSeriesDao(): SpecialSeriesDao
+    abstract fun wishlistDao(): WishlistDao   // NEU
 
     companion object {
         @Volatile
@@ -26,10 +27,22 @@ abstract class MangaDatabase : RoomDatabase() {
             }
         }
 
-        // NEU: v3 -> v4 (boolean als INTEGER NOT NULL DEFAULT 0)
         private val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE manga_table ADD COLUMN audioNoteEnabled INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        // NEU: 4 -> 5 (Wunschliste-Tabelle)
+        private val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS wishlist_table (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        dateAdded INTEGER NOT NULL
+                    )
+                """.trimIndent())
             }
         }
 
@@ -40,7 +53,7 @@ abstract class MangaDatabase : RoomDatabase() {
                     MangaDatabase::class.java,
                     "manga_database"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4) // NEU
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5) // NEU
                     .build()
                 INSTANCE = instance
                 instance
@@ -48,5 +61,6 @@ abstract class MangaDatabase : RoomDatabase() {
         }
     }
 }
+
 
 
