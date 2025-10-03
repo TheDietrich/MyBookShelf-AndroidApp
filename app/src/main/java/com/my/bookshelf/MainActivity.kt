@@ -91,6 +91,7 @@ import androidx.core.view.WindowCompat
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.toArgb
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.compose.material.Checkbox
 
 
 @Composable
@@ -496,12 +497,12 @@ enum class MangaSortOrder(val displayName: String) {
     DATE_ADDED_ASC("Hinzugefügt ↑"),
     DATE_ADDED_DESC("Hinzugefügt ↓"),
     DATE_MODIFIED_ASC("Zuletzt geändert ↑"),
-    DATE_MODIFIED_DESC("Zuletzt geändert ↓"),
-    COMPLETED_LAST("Abgeschlossen zuletzt")
+    DATE_MODIFIED_DESC("Zuletzt geändert ↓")
 }
 
 
 val SORT_ORDER_KEY = stringPreferencesKey("mangaSortOrder")
+val COMPLETED_LAST_KEY = booleanPreferencesKey("completedLast")
 
 
 
@@ -509,6 +510,7 @@ val SORT_ORDER_KEY = stringPreferencesKey("mangaSortOrder")
 fun MangaListScreen(navController: NavController) {
     val viewModel: MangaViewModel = viewModel()
     val mangaList by viewModel.mangaList.collectAsState(initial = emptyList())
+    var completedLastEnabled by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -516,15 +518,23 @@ fun MangaListScreen(navController: NavController) {
     var sortOrder by remember { mutableStateOf(MangaSortOrder.TITLE_ASC) }
     LaunchedEffect(Unit) {
         context.dataStore.data.collect { prefs ->
-            sortOrder = MangaSortOrder.entries.find {
-                it.name == prefs[SORT_ORDER_KEY]
-            } ?: MangaSortOrder.TITLE_ASC
+            val storedOrder = prefs[SORT_ORDER_KEY]
+            // Migration: Falls aus alten Versionen noch "COMPLETED_LAST" gespeichert ist:
+            if (storedOrder == "COMPLETED_LAST") {
+                sortOrder = MangaSortOrder.TITLE_ASC
+                completedLastEnabled = true
+            } else {
+                sortOrder = MangaSortOrder.entries.find { it.name == storedOrder } ?: MangaSortOrder.TITLE_ASC
+                completedLastEnabled = prefs[COMPLETED_LAST_KEY] ?: false
+            }
         }
     }
+
 
     var sortDropdownExpanded by remember { mutableStateOf(false) }
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+
 
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(isSearchActive) {
@@ -532,19 +542,26 @@ fun MangaListScreen(navController: NavController) {
     }
 
     // Anwendung der Sortierung
+    // Hilfsfunktion: "normale" Sortierung je nach sortOrder
+    fun sortByOrder(list: List<MangaEntity>, order: MangaSortOrder): List<MangaEntity> = when (order) {
+        MangaSortOrder.TITLE_ASC -> list.sortedBy { it.titel.lowercase() }
+        MangaSortOrder.TITLE_DESC -> list.sortedByDescending { it.titel.lowercase() }
+        MangaSortOrder.DATE_ADDED_ASC -> list.sortedBy { it.dateAdded }
+        MangaSortOrder.DATE_ADDED_DESC -> list.sortedByDescending { it.dateAdded }
+        MangaSortOrder.DATE_MODIFIED_ASC -> list.sortedBy { it.lastModified }
+        MangaSortOrder.DATE_MODIFIED_DESC -> list.sortedByDescending { it.lastModified }
+    }
+
     val filteredManga = mangaList
         .filter { it.titel.contains(searchQuery, ignoreCase = true) }
         .let { list ->
-            when (sortOrder) {
-                MangaSortOrder.TITLE_ASC -> list.sortedBy { it.titel.lowercase() }
-                MangaSortOrder.TITLE_DESC -> list.sortedByDescending { it.titel.lowercase() }
-                MangaSortOrder.DATE_ADDED_ASC -> list.sortedBy { it.dateAdded }
-                MangaSortOrder.DATE_ADDED_DESC -> list.sortedByDescending { it.dateAdded }
-                MangaSortOrder.DATE_MODIFIED_ASC -> list.sortedBy { it.lastModified }
-                MangaSortOrder.DATE_MODIFIED_DESC -> list.sortedByDescending { it.lastModified }
-                MangaSortOrder.COMPLETED_LAST -> list.sortedWith(
-                    compareBy<MangaEntity> { it.isCompleted }.thenBy { it.titel.lowercase() }
-                )
+            if (completedLastEnabled) {
+                val (open, done) = list.partition { !it.isCompleted }
+                val sortedOpen = sortByOrder(open, sortOrder)           // gewählte Sortierung
+                val sortedDone = done.sortedBy { it.titel.lowercase() } // abgeschlossene immer A–Z
+                sortedOpen + sortedDone
+            } else {
+                sortByOrder(list, sortOrder)
             }
         }
 
@@ -604,7 +621,17 @@ fun MangaListScreen(navController: NavController) {
                                 expanded = sortDropdownExpanded,
                                 onDismissRequest = { sortDropdownExpanded = false },
                             ) {
-                                MangaSortOrder.entries.forEach { order ->
+                                // Liste der Sortieroptionen (ohne "Abgeschlossen zuletzt")
+                                val sortOptions = listOf(
+                                    MangaSortOrder.TITLE_ASC,
+                                    MangaSortOrder.TITLE_DESC,
+                                    MangaSortOrder.DATE_ADDED_ASC,
+                                    MangaSortOrder.DATE_ADDED_DESC,
+                                    MangaSortOrder.DATE_MODIFIED_ASC,
+                                    MangaSortOrder.DATE_MODIFIED_DESC
+                                )
+
+                                sortOptions.forEach { order ->
                                     DropdownMenuItem(
                                         onClick = {
                                             sortOrder = order
@@ -627,6 +654,37 @@ fun MangaListScreen(navController: NavController) {
                                                 )
                                             }
                                         }
+                                    }
+                                }
+
+                                Divider()
+
+                                // Checkbox "Abgeschlossene zuletzt" als letzter Eintrag
+                                DropdownMenuItem(
+                                    onClick = {
+                                        val newValue = !completedLastEnabled
+                                        completedLastEnabled = newValue
+                                        scope.launch {
+                                            context.dataStore.edit { prefs ->
+                                                prefs[COMPLETED_LAST_KEY] = newValue
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(
+                                            checked = completedLastEnabled,
+                                            onCheckedChange = { checked ->
+                                                completedLastEnabled = checked
+                                                scope.launch {
+                                                    context.dataStore.edit { prefs ->
+                                                        prefs[COMPLETED_LAST_KEY] = checked
+                                                    }
+                                                }
+                                            }
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Abgeschlossene zuletzt")
                                     }
                                 }
                             }
