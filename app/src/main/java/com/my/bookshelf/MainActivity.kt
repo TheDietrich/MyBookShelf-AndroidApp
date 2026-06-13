@@ -101,6 +101,11 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.TextButton
 
 
 @Composable
@@ -151,6 +156,29 @@ class MangaViewModel(app: Application) : AndroidViewModel(app) {
 
     private val wishlistDao = MangaDatabase.getDatabase(app).wishlistDao()
     val wishlist: kotlinx.coroutines.flow.Flow<List<WishlistItemEntity>> = wishlistDao.getAll()
+
+    private val categoryDao = MangaDatabase.getDatabase(app).categoryDao()
+    val categoryList: kotlinx.coroutines.flow.Flow<List<CategoryEntity>> = categoryDao.getAllCategories()
+
+    fun addCategory(name: String) = viewModelScope.launch {
+        if (name.isBlank()) return@launch
+        val existing = categoryDao.getAllCategories().first()
+        val maxOrder = existing.maxOfOrNull { it.sortOrder } ?: -1
+        categoryDao.insert(CategoryEntity(name = name.trim(), sortOrder = maxOrder + 1))
+    }
+
+    fun updateCategory(category: CategoryEntity) = viewModelScope.launch {
+        categoryDao.update(category)
+    }
+
+    fun deleteCategory(category: CategoryEntity, fallbackCategoryId: String) = viewModelScope.launch {
+        dao.reassignToCategory(category.id, fallbackCategoryId)
+        categoryDao.delete(category)
+    }
+
+    fun moveMangaToCategory(manga: MangaEntity, categoryId: String) = viewModelScope.launch {
+        dao.update(manga.copy(categoryId = categoryId, lastModified = System.currentTimeMillis()))
+    }
 
     private val _updateSuccess = mutableStateOf(false)
     val updateSuccess: State<Boolean> = _updateSuccess
@@ -310,7 +338,12 @@ fun MainApp() {
             // 2. App-Inhalt
             NavHost(navController, startDestination = "mangaList") {
                 composable("mangaList") { MangaListScreen(navController) }
-                composable("mangaAdd") { MangaAddScreen(navController) }
+                composable("mangaAdd/{categoryId}") { backStackEntry ->
+                    MangaAddScreen(
+                        navController = navController,
+                        categoryId = backStackEntry.arguments?.getString("categoryId") ?: CategoryEntity.DEFAULT_ID
+                    )
+                }
                 composable("mangaDetail/{mangaId}") { backStackEntry ->
                     MangaDetailScreen(
                         mangaId = backStackEntry.arguments?.getString("mangaId") ?: "",
@@ -340,9 +373,9 @@ fun SettingsScreen(navController: NavController) {
         }
     }
 
-    // Hier initialisieren wir den MangaViewModel, um auch die Backup-Daten zu erhalten
     val viewModel: MangaViewModel = viewModel()
     val mangaList by viewModel.mangaList.collectAsState(emptyList())
+    val categoryList by viewModel.categoryList.collectAsState(emptyList())
 
     // Launcher zum Erstellen eines Backups (Export)
     val backupLauncher = rememberLauncherForActivityResult(
@@ -401,10 +434,10 @@ fun SettingsScreen(navController: NavController) {
                         specialSeries = specialSeriesDto,
                         dateAdded = mangaEntity.dateAdded,
                         lastModified = mangaEntity.lastModified,
-
                         audioNoteEnabled = mangaEntity.audioNoteEnabled,
                         audioBase64 = audioB64,
-                        audioUpdatedAt = mangaEntity.audioNoteUpdatedAt
+                        audioUpdatedAt = mangaEntity.audioNoteUpdatedAt,
+                        categoryId = mangaEntity.categoryId
                     )
                 }
 
@@ -420,11 +453,16 @@ fun SettingsScreen(navController: NavController) {
                     )
                 }
 
-                // 4) In BackupData packen (FORMAT v3)
+                // Kategorien exportieren
+                val categoryDto = categoryList.map {
+                    CategoryExportDto(id = it.id, name = it.name, sortOrder = it.sortOrder)
+                }
+
                 val backupData = BackupData(
-                    version = 3,
+                    version = 4,
                     mangaList = backupMangaList,
-                    wishlist = wishlistDto
+                    wishlist = wishlistDto,
+                    categories = categoryDto
                 )
 
                 // 5) JSON schreiben
@@ -460,7 +498,27 @@ fun SettingsScreen(navController: NavController) {
                     }
                     if (backupData == null) return@launch
 
-                    // 2) Für jedes Backup-Manga
+                    // 2) Kategorien importieren
+                    val categoryDaoImport = MangaDatabase.getDatabase(context).categoryDao()
+                    val categoriesToImport = backupData.categories ?: emptyList()
+                    if (categoriesToImport.isEmpty()) {
+                        // Altes Backup ohne Kategorien – Standardkategorie sicherstellen
+                        categoryDaoImport.insert(
+                            CategoryEntity(
+                                id = CategoryEntity.DEFAULT_ID,
+                                name = CategoryEntity.DEFAULT_NAME,
+                                sortOrder = 0
+                            )
+                        )
+                    } else {
+                        categoriesToImport.forEach { c ->
+                            categoryDaoImport.insert(
+                                CategoryEntity(id = c.id, name = c.name, sortOrder = c.sortOrder)
+                            )
+                        }
+                    }
+
+                    // 3) Für jedes Backup-Manga
                     backupData.mangaList.forEach { dto ->
                         val isCompleted = dto.isCompleted ?: false
                         val nextVolumeDate = dto.nextVolumeDate
@@ -497,7 +555,8 @@ fun SettingsScreen(navController: NavController) {
                             lastModified = lastModified,
                             audioNoteUri = realAudioPath,
                             audioNoteUpdatedAt = audioUpdatedAt,
-                            audioNoteEnabled = audioEnabled
+                            audioNoteEnabled = audioEnabled,
+                            categoryId = dto.categoryId ?: CategoryEntity.DEFAULT_ID
                         )
                         viewModel.addManga(mangaEntity)
 
@@ -514,7 +573,7 @@ fun SettingsScreen(navController: NavController) {
                         }
                     }
 
-                    // 3) Wunschliste importieren (falls vorhanden)
+                    // 4) Wunschliste importieren (falls vorhanden)
                     val wl = backupData.wishlist ?: emptyList()
                     val wishlistDao = MangaDatabase.getDatabase(context).wishlistDao()
                     wl.forEach { w ->
@@ -613,10 +672,21 @@ val COMPLETED_LAST_KEY = booleanPreferencesKey("completedLast")
 
 
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MangaListScreen(navController: NavController) {
     val viewModel: MangaViewModel = viewModel()
     val mangaList by viewModel.mangaList.collectAsState(initial = emptyList())
+    val categories by viewModel.categoryList.collectAsState(initial = emptyList())
+    var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+    var managingCategory by remember { mutableStateOf<CategoryEntity?>(null) }
+    var showAddCategoryDialog by remember { mutableStateOf(false) }
+    var newCategoryName by remember { mutableStateOf("") }
+    var showCategoryOptionsDialog by remember { mutableStateOf(false) }
+    var showRenameCategoryDialog by remember { mutableStateOf(false) }
+    var renamingCategoryName by remember { mutableStateOf("") }
+    var showDeleteCategoryDialog by remember { mutableStateOf(false) }
+    var categoryDisplayOrder by remember { mutableStateOf<List<String>>(emptyList()) }
     var completedLastEnabled by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
@@ -637,6 +707,18 @@ fun MangaListScreen(navController: NavController) {
         }
     }
 
+
+    LaunchedEffect(categories) {
+        if (categories.isNotEmpty()) {
+            val currentIds = categories.map { it.id }.toSet()
+            val surviving = categoryDisplayOrder.filter { it in currentIds }
+            val added = categories.map { it.id }.filter { it !in surviving.toSet() }
+            categoryDisplayOrder = surviving + added
+            if (selectedCategoryId == null || categories.none { it.id == selectedCategoryId }) {
+                selectedCategoryId = categoryDisplayOrder.firstOrNull()
+            }
+        }
+    }
 
     var sortDropdownExpanded by remember { mutableStateOf(false) }
     var isSearchActive by remember { mutableStateOf(false) }
@@ -659,7 +741,11 @@ fun MangaListScreen(navController: NavController) {
         MangaSortOrder.DATE_MODIFIED_DESC -> list.sortedByDescending { it.lastModified }
     }
 
+    val orderedCategories = categoryDisplayOrder.mapNotNull { id -> categories.find { it.id == id } }
+    val categoryRowState = androidx.compose.foundation.lazy.rememberLazyListState()
+
     val filteredManga = mangaList
+        .filter { selectedCategoryId == null || it.categoryId == selectedCategoryId }
         .filter { it.titel.contains(searchQuery, ignoreCase = true) }
         .let { list ->
             if (completedLastEnabled) {
@@ -812,19 +898,192 @@ fun MangaListScreen(navController: NavController) {
         floatingActionButton = {
             FloatingActionButton(
                 modifier = Modifier.navigationBarsPadding(),
-                onClick = { navController.navigate("mangaAdd") },
+                onClick = { navController.navigate("mangaAdd/${selectedCategoryId ?: CategoryEntity.DEFAULT_ID}") },
                 backgroundColor = MaterialTheme.colors.secondary
             ) {
                 Icon(Icons.Filled.Add, contentDescription = "Add Book")
             }
         }
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.padding(padding).padding(8.dp)
-        ) {
-            items(filteredManga) { manga ->
-                MangaListItem(manga, navController)
+        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            // Kategorie-Tab-Leiste
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colors.surface),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LazyRow(
+                    state = categoryRowState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp)
+                ) {
+                    items(orderedCategories, key = { it.id }) { category ->
+                        val isSelected = category.id == selectedCategoryId
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (isSelected) MaterialTheme.colors.primary else Color.Transparent,
+                            modifier = Modifier
+                                .animateItem()
+                                .padding(horizontal = 4.dp, vertical = 6.dp)
+                                .combinedClickable(
+                                    onClick = {
+                                        selectedCategoryId = category.id
+                                        categoryDisplayOrder = listOf(category.id) +
+                                            categoryDisplayOrder.filter { it != category.id }
+                                        scope.launch { categoryRowState.animateScrollToItem(0) }
+                                    },
+                                    onLongClick = {
+                                        managingCategory = category
+                                        showCategoryOptionsDialog = true
+                                    }
+                                )
+                        ) {
+                            Text(
+                                text = category.name,
+                                color = if (isSelected) MaterialTheme.colors.onPrimary
+                                        else MaterialTheme.colors.onSurface,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.body2
+                            )
+                        }
+                    }
+                }
+                IconButton(onClick = { showAddCategoryDialog = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "Kategorie hinzufügen",
+                        tint = MaterialTheme.colors.onSurface
+                    )
+                }
             }
+            Divider()
+
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(8.dp)
+            ) {
+                items(filteredManga) { manga ->
+                    MangaListItem(manga, navController)
+                }
+            }
+        }
+    }
+
+    // Dialoge für Kategorie-Verwaltung
+    if (showAddCategoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddCategoryDialog = false; newCategoryName = "" },
+            title = { Text("Neue Kategorie") },
+            text = {
+                OutlinedTextField(
+                    value = newCategoryName,
+                    onValueChange = { newCategoryName = it },
+                    label = { Text("Name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.addCategory(newCategoryName)
+                        newCategoryName = ""
+                        showAddCategoryDialog = false
+                    },
+                    enabled = newCategoryName.isNotBlank()
+                ) { Text("Erstellen") }
+            },
+            dismissButton = {
+                Button(onClick = { showAddCategoryDialog = false; newCategoryName = "" }) {
+                    Text("Abbrechen")
+                }
+            }
+        )
+    }
+
+    if (showCategoryOptionsDialog && managingCategory != null) {
+        AlertDialog(
+            onDismissRequest = { showCategoryOptionsDialog = false },
+            title = { Text(managingCategory!!.name) },
+            text = {
+                Column {
+                    TextButton(onClick = {
+                        renamingCategoryName = managingCategory!!.name
+                        showCategoryOptionsDialog = false
+                        showRenameCategoryDialog = true
+                    }) { Text("Umbenennen") }
+                    if (categories.size > 1) {
+                        TextButton(onClick = {
+                            showCategoryOptionsDialog = false
+                            showDeleteCategoryDialog = true
+                        }) { Text("Löschen", color = MaterialTheme.colors.error) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                Button(onClick = { showCategoryOptionsDialog = false }) { Text("Abbrechen") }
+            }
+        )
+    }
+
+    if (showRenameCategoryDialog && managingCategory != null) {
+        AlertDialog(
+            onDismissRequest = { showRenameCategoryDialog = false },
+            title = { Text("Kategorie umbenennen") },
+            text = {
+                OutlinedTextField(
+                    value = renamingCategoryName,
+                    onValueChange = { renamingCategoryName = it },
+                    label = { Text("Neuer Name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        managingCategory?.let {
+                            viewModel.updateCategory(it.copy(name = renamingCategoryName.trim()))
+                        }
+                        showRenameCategoryDialog = false
+                    },
+                    enabled = renamingCategoryName.isNotBlank()
+                ) { Text("Speichern") }
+            },
+            dismissButton = {
+                Button(onClick = { showRenameCategoryDialog = false }) { Text("Abbrechen") }
+            }
+        )
+    }
+
+    if (showDeleteCategoryDialog && managingCategory != null) {
+        val fallback = categories.firstOrNull { it.id != managingCategory!!.id }
+        if (fallback != null) {
+            AlertDialog(
+                onDismissRequest = { showDeleteCategoryDialog = false },
+                title = { Text("Kategorie löschen?") },
+                text = {
+                    Text(
+                        "Alle Einträge in \"${managingCategory!!.name}\" werden in " +
+                        "\"${fallback.name}\" verschoben."
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        managingCategory?.let { cat ->
+                            viewModel.deleteCategory(cat, fallback.id)
+                            if (selectedCategoryId == cat.id) selectedCategoryId = fallback.id
+                        }
+                        showDeleteCategoryDialog = false
+                        managingCategory = null
+                    }) { Text("Löschen") }
+                },
+                dismissButton = {
+                    Button(onClick = { showDeleteCategoryDialog = false }) { Text("Abbrechen") }
+                }
+            )
         }
     }
 }
@@ -929,7 +1188,7 @@ fun MangaListItem(
 
 /** Neues Buch hinzufügen (ohne KeyboardOptions). */
 @Composable
-fun MangaAddScreen(navController: NavController) {
+fun MangaAddScreen(navController: NavController, categoryId: String = CategoryEntity.DEFAULT_ID) {
     val viewModel: MangaViewModel = viewModel()
     val context = LocalContext.current
 
@@ -1003,7 +1262,8 @@ fun MangaAddScreen(navController: NavController) {
                             titel = title,
                             coverUri = coverPath,
                             aktuellerBand = currentVolume.toInt(),
-                            gekaufteBände = ownedVolumes.toInt()
+                            gekaufteBände = ownedVolumes.toInt(),
+                            categoryId = categoryId
                         )
                     )
                     navController.popBackStack()
@@ -1071,6 +1331,7 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
     val viewModel: MangaViewModel = viewModel()
     val mangaList by viewModel.mangaList.collectAsState(initial = emptyList())
     val manga = mangaList.find { it.id == mangaId }
+    val categories by viewModel.categoryList.collectAsState(initial = emptyList())
 
     // Zustände für Haupt-Buchdetails
     var currentVolume by remember { mutableStateOf("0") }
@@ -1119,8 +1380,10 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
         }
     }
 
-    //Audio An Aus
-    var showDisableAudioConfirm by remember { mutableStateOf(false) } // NEU
+    var showMoveCategoryDialog by remember { mutableStateOf(false) }
+    var movingToCategoryId by remember { mutableStateOf("") }
+
+    var showDisableAudioConfirm by remember { mutableStateOf(false) }
 
 
     // Umbenennen einer Sonderreihe
@@ -1206,6 +1469,13 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                             showRenameDialog = true
                         }) {
                             Text("Titel anpassen")
+                        }
+                        DropdownMenuItem(onClick = {
+                            menuExpanded = false
+                            movingToCategoryId = manga?.categoryId ?: CategoryEntity.DEFAULT_ID
+                            showMoveCategoryDialog = true
+                        }) {
+                            Text("Kategorie verschieben")
                         }
                         DropdownMenuItem(onClick = {
                             menuExpanded = false
@@ -1583,7 +1853,42 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
         )
     }
 
-    // NEU: Bestätigen, dass Audio-Notiz deaktiviert wird (löscht Aufnahme)
+    if (showMoveCategoryDialog && categories.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { showMoveCategoryDialog = false },
+            title = { Text("Kategorie wählen") },
+            text = {
+                Column {
+                    categories.forEach { cat ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { movingToCategoryId = cat.id }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            RadioButton(
+                                selected = movingToCategoryId == cat.id,
+                                onClick = { movingToCategoryId = cat.id }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(cat.name)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    manga?.let { viewModel.moveMangaToCategory(it, movingToCategoryId) }
+                    showMoveCategoryDialog = false
+                }) { Text("Verschieben") }
+            },
+            dismissButton = {
+                Button(onClick = { showMoveCategoryDialog = false }) { Text("Abbrechen") }
+            }
+        )
+    }
+
     if (showDisableAudioConfirm) {
         AlertDialog(
             onDismissRequest = { showDisableAudioConfirm = false },

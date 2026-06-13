@@ -24,7 +24,9 @@ interface MangaDao {
     @Update
     suspend fun update(manga: MangaEntity): Int
 
-    // Fehlt in deinem Code, daher "Unresolved reference: delete":
     @Delete
     suspend fun delete(manga: MangaEntity)
+
+    @Query("UPDATE manga_table SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId")
+    suspend fun reassignToCategory(oldCategoryId: String, newCategoryId: String)
 }

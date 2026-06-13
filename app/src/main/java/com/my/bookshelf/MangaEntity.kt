@@ -22,7 +22,8 @@ data class MangaEntity(
     val lastModified: Long = System.currentTimeMillis(),
     val audioNoteUri: String? = null,
     val audioNoteUpdatedAt: Long? = null,
-    val audioNoteEnabled: Boolean = false       // NEU: Feature pro Manga an/aus
+    val audioNoteEnabled: Boolean = false,
+    val categoryId: String = CategoryEntity.DEFAULT_ID
 )
 
 
