@@ -1,32 +1,27 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    id("kotlin-kapt")
+    alias(libs.plugins.ksp)
 }
 
 android {
     namespace = "com.my.bookshelf"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.my.bookshelf"
         minSdk = 30
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 6
         versionName = "1.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // 1) Signing-Konfiguration hinzufügen
     signingConfigs {
         create("release") {
-            // Windows-Pfade funktionieren in Kotlin DSL i. d. R. auch mit Forward-Slashes
             storeFile = file("C:/Users/jonas/Nextcloud/Programier_Projekte/MyAndroidKeyStore.jks")
-            // Wichtig: Dollarzeichen müssen mit '\' escaped werden
             storePassword = "n\$EzGtyMx5w4qqHKm*%@S7J%C"
             keyAlias = "mybookshelf"
             keyPassword = "n\$EzGtyMx5w4qqHKm*%@S7J%C"
@@ -34,7 +29,6 @@ android {
     }
 
     buildTypes {
-        // 2) release-Build mit obiger Signing-Konfiguration verknüpfen
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
@@ -45,88 +39,60 @@ android {
         }
     }
 
-    kapt {
-        arguments {
-            arg("room.schemaLocation", "$projectDir/schemas")
-        }
-    }
-
-
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-    kotlinOptions {
-        jvmTarget = "11"
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures {
         compose = true
     }
 }
 
-// --------------------------------------------------
-// Nur EINE Compose-BOM-Version festlegen, z.B. 2023.05.01
-// --------------------------------------------------
-//def composeBomVersion = "2023.05.01"
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
 
 dependencies {
-    // Compose BOM
-    implementation(platform(libs.androidx.compose.bom.v20230501))
+    implementation(platform(libs.androidx.compose.bom))
 
-    // Jeweils Compose-Module, jetzt in passender Version
-    implementation(libs.ui)
-    implementation(libs.ui.tooling.preview)
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.foundation)
-    // Falls du Material 2 brauchst (SwipeToDismiss etc.):
     implementation(libs.androidx.material)
-    // Falls du Material 3 willst (Achtung: Inkompat. APIs):
-    implementation(libs.material3)
+    implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons.extended)
 
-    // Navigation
     implementation(libs.androidx.navigation.compose)
 
-    // Room
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
-    kapt(libs.androidx.room.compiler)
+    ksp(libs.androidx.room.compiler)
 
-    // Coroutines
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
 
-    // DataStore
     implementation(libs.androidx.datastore.preferences)
 
-    // Gson
     implementation(libs.gson)
 
-    // Coil
     implementation(libs.coil.compose)
 
-    // AndroidX-Kram:
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
 
-    // Tests
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-    // BOM auch für AndroidTests
-    androidTestImplementation(platform(libs.androidx.compose.bom.v20230501))
+    androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
 
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
-
-    implementation (libs.androidx.material.icons.extended)
-
 }
 
 tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_11)
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
-
-

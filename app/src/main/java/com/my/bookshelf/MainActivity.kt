@@ -56,8 +56,8 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import androidx.compose.ui.res.painterResource
+import coil3.compose.AsyncImage
 import com.google.gson.Gson
 import kotlinx.coroutines.launch
 import java.io.File
@@ -268,9 +268,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         super.onCreate(savedInstanceState)
-        // Nach setContent oder davor:
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
         setContent {
             MainApp()
         }
@@ -297,8 +294,6 @@ fun MainApp() {
         val window = activity.window
 
         SideEffect {
-            // Statusbar oben auf Theme-Primary setzen
-            window.statusBarColor = primaryColor.toArgb()
             WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = false
         }
 
@@ -877,12 +872,11 @@ fun MangaListItem(
 
             // Bild / Placeholder
             AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(coverModel)
-                    .fallback(R.drawable.placeholder)
-                    .error(R.drawable.placeholder)
-                    .build(),
+                model = coverModel,
                 contentDescription = "Cover",
+                placeholder = painterResource(R.drawable.placeholder),
+                error = painterResource(R.drawable.placeholder),
+                fallback = painterResource(R.drawable.placeholder),
                 modifier = Modifier.size(100.dp),
                 contentScale = ContentScale.Crop
             )
@@ -1300,12 +1294,11 @@ fun MangaDetailScreen(mangaId: String, navController: NavController) {
                 // Cover
                 val coverModel = if (currentManga.coverUri.isNullOrBlank()) null else currentManga.coverUri
                 AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(coverModel)
-                        .fallback(R.drawable.placeholder)
-                        .error(R.drawable.placeholder)
-                        .build(),
+                    model = coverModel,
                     contentDescription = "Cover",
+                    placeholder = painterResource(R.drawable.placeholder),
+                    error = painterResource(R.drawable.placeholder),
+                    fallback = painterResource(R.drawable.placeholder),
                     modifier = Modifier
                         .size(200.dp)
                         .align(Alignment.CenterHorizontally),
@@ -1862,7 +1855,7 @@ fun AudioNoteCard(
             return
         }
         val path = audioFilePath()
-        mediaRecorder = MediaRecorder().apply {
+        mediaRecorder = MediaRecorder(context).apply {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
