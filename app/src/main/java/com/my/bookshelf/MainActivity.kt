@@ -1855,7 +1855,12 @@ fun AudioNoteCard(
             return
         }
         val path = audioFilePath()
-        mediaRecorder = MediaRecorder(context).apply {
+        @Suppress("DEPRECATION")
+        mediaRecorder = (if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            MediaRecorder(context)
+        } else {
+            MediaRecorder()
+        }).apply {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
